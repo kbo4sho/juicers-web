@@ -14,7 +14,7 @@ Use current desktop Chrome or Edge over `https://` (or `localhost`).
 
 1. Choose **Play with camera** and approve browser camera access.
 2. Step back until your face and both hands fit in frame.
-3. Match the fruit badge attached above your head.
+3. A strawberry mask replaces your head and scales with your detected face; match the fruit badge floating above it.
 4. Overlap a falling fruit with either hand, then close and reopen your fist.
 
 ### Demo mode
@@ -64,7 +64,7 @@ Other scripts:
 
 - `src/App.tsx` owns onboarding, camera permission and denial recovery, tutorial, countdown, HUD, results, and replay.
 - `src/game/GameCanvas.tsx` owns the display-refresh render loop, deterministic round state, collision, scoring, difficulty ramp, fruit art, splatters, particles, and powerups.
-- `src/game/tracking.ts` initializes local MediaPipe face and two-hand tracking, smooths the head target, and applies fist-close hysteresis.
+- `src/game/tracking.ts` initializes local MediaPipe face and two-hand tracking, smooths the face position and scale used by the strawberry mask, and applies fist-close hysteresis.
 - `src/game/audio.ts` synthesizes distinct Web Audio cues without loading audio files.
 - `src/game/model.ts` contains the scoring and deterministic random contracts.
 

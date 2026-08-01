@@ -2,6 +2,7 @@ import { FaceLandmarker, FilesetResolver, HandLandmarker } from "@mediapipe/task
 import type { RefObject } from "react";
 
 export type TrackedPoint = { x: number; y: number };
+export type TrackedHead = TrackedPoint & { width: number; height: number };
 export type TrackedHand = TrackedPoint & {
   id: "left" | "right";
   closed: boolean;
@@ -9,7 +10,7 @@ export type TrackedHand = TrackedPoint & {
 };
 export type TrackingFrame = {
   source: "camera" | "demo";
-  head: TrackedPoint | null;
+  head: TrackedHead | null;
   hands: TrackedHand[];
   updatedAt: number;
 };
@@ -18,7 +19,7 @@ export type VisionStatus = "idle" | "loading" | "ready" | "error";
 
 export const makeDemoFrame = (): TrackingFrame => ({
   source: "demo",
-  head: { x: 0.5, y: 0.16 },
+  head: { x: 0.5, y: 0.16, width: 0.16, height: 0.22 },
   hands: [
     { id: "left", x: 0.32, y: 0.68, closed: false, confidence: 1 },
     { id: "right", x: 0.68, y: 0.68, closed: false, confidence: 1 },
@@ -28,6 +29,7 @@ export const makeDemoFrame = (): TrackingFrame => ({
 
 const assetPath = (path: string) => `${import.meta.env.BASE_URL}${path}`;
 const mix = (from: number, to: number, amount: number) => from + (to - from) * amount;
+const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
 
 type Landmark = { x: number; y: number; z: number };
 
@@ -104,6 +106,7 @@ export async function startVisionTracking(
 
   onStatus("ready");
   let lastInference = 0;
+  let lastFaceSeenAt = 0;
   const rememberedClosed: Record<string, boolean> = { left: false, right: false };
 
   const loop = (now: number) => {
@@ -134,14 +137,37 @@ export async function startVisionTracking(
           });
         });
 
-        const forehead = faceResult?.faceLandmarks[0]?.[10];
+        const facePoints = faceResult?.faceLandmarks[0];
         const oldHead = previous.head;
-        const head = forehead
-          ? {
-              x: mix(oldHead?.x ?? 1 - forehead.x, 1 - forehead.x, 0.24),
-              y: mix(oldHead?.y ?? Math.max(0.07, forehead.y - 0.055), Math.max(0.07, forehead.y - 0.055), 0.24),
-            }
-          : oldHead;
+        let head: TrackedHead | null = oldHead;
+        if (facePoints?.length) {
+          const bounds = facePoints.reduce(
+            (box, point) => ({
+              minX: Math.min(box.minX, point.x),
+              maxX: Math.max(box.maxX, point.x),
+              minY: Math.min(box.minY, point.y),
+              maxY: Math.max(box.maxY, point.y),
+            }),
+            { minX: 1, maxX: 0, minY: 1, maxY: 0 },
+          );
+          const faceWidth = bounds.maxX - bounds.minX;
+          const faceHeight = bounds.maxY - bounds.minY;
+          const measured = {
+            x: 1 - (bounds.minX + bounds.maxX) / 2,
+            y: (bounds.minY + bounds.maxY) / 2 - faceHeight * 0.04,
+            width: clamp(faceWidth * 1.42, 0.12, 0.42),
+            height: clamp(faceHeight * 1.52, 0.16, 0.52),
+          };
+          head = {
+            x: mix(oldHead?.x ?? measured.x, measured.x, 0.24),
+            y: mix(oldHead?.y ?? measured.y, measured.y, 0.24),
+            width: mix(oldHead?.width ?? measured.width, measured.width, 0.18),
+            height: mix(oldHead?.height ?? measured.height, measured.height, 0.18),
+          };
+          lastFaceSeenAt = now;
+        } else if (now - lastFaceSeenAt > 550) {
+          head = null;
+        }
 
         frameRef.current = {
           source: "camera",
