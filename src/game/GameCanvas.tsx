@@ -102,6 +102,7 @@ type Engine = {
 };
 
 const ROUND_SECONDS = 60;
+const SHOW_STRAWBERRY_PREVIEW = import.meta.env.DEV && new URLSearchParams(window.location.search).has("strawberryPreview");
 
 function newEngine(seed: number): Engine {
   const random = createSeededRandom(seed);
@@ -348,6 +349,20 @@ function toWorld(
   return { x: point.x * width, y: point.y * height };
 }
 
+function toWorldSize(
+  size: { width: number; height: number },
+  width: number,
+  height: number,
+  source: TrackingFrame["source"],
+  video: HTMLVideoElement | null,
+) {
+  if (source === "camera" && video) {
+    const fit = fitVideo(video, width, height);
+    return { width: size.width * fit.width, height: size.height * fit.height };
+  }
+  return { width: size.width * width, height: size.height * height };
+}
+
 function drawBackdrop(
   context: CanvasRenderingContext2D,
   width: number,
@@ -435,6 +450,88 @@ function drawHeadTarget(
   context.textAlign = "center";
   context.letterSpacing = "1.6px";
   context.fillText(frenzy ? "ANY FRUIT ×2" : "MATCH ME", 0, radius + 18);
+  context.restore();
+}
+
+function drawStrawberryHead(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  time: number,
+) {
+  const safeWidth = Math.max(92, width);
+  const safeHeight = Math.max(116, height);
+  const pulse = 1 + Math.sin(time * 0.0032) * 0.008;
+  context.save();
+  context.translate(x, y);
+  context.scale(pulse, pulse);
+  context.shadowColor = "rgba(255,48,104,.62)";
+  context.shadowBlur = Math.min(46, safeWidth * 0.2);
+  context.shadowOffsetY = safeHeight * 0.035;
+
+  const body = new Path2D();
+  body.moveTo(-safeWidth * 0.44, -safeHeight * 0.28);
+  body.bezierCurveTo(-safeWidth * 0.52, -safeHeight * 0.02, -safeWidth * 0.3, safeHeight * 0.34, 0, safeHeight * 0.5);
+  body.bezierCurveTo(safeWidth * 0.3, safeHeight * 0.34, safeWidth * 0.52, -safeHeight * 0.02, safeWidth * 0.44, -safeHeight * 0.28);
+  body.bezierCurveTo(safeWidth * 0.3, -safeHeight * 0.44, safeWidth * 0.12, -safeHeight * 0.4, 0, -safeHeight * 0.29);
+  body.bezierCurveTo(-safeWidth * 0.12, -safeHeight * 0.4, -safeWidth * 0.3, -safeHeight * 0.44, -safeWidth * 0.44, -safeHeight * 0.28);
+  body.closePath();
+
+  const gradient = context.createRadialGradient(-safeWidth * 0.2, -safeHeight * 0.26, 0, 0, 0, safeHeight * 0.72);
+  gradient.addColorStop(0, "#ff9a9b");
+  gradient.addColorStop(0.23, "#ff486e");
+  gradient.addColorStop(0.7, "#e82355");
+  gradient.addColorStop(1, "#a80e3c");
+  context.fillStyle = gradient;
+  context.fill(body);
+  context.shadowColor = "transparent";
+  context.strokeStyle = "rgba(111,7,44,.5)";
+  context.lineWidth = Math.max(3, safeWidth * 0.025);
+  context.stroke(body);
+
+  const seeds = [
+    [-0.25, -0.2, -0.22], [0, -0.23, 0], [0.25, -0.2, 0.22],
+    [-0.34, -0.02, -0.28], [-0.1, 0, -0.1], [0.15, -0.01, 0.12], [0.34, 0.02, 0.28],
+    [-0.25, 0.19, -0.22], [0, 0.2, 0], [0.24, 0.2, 0.22],
+    [-0.12, 0.36, -0.1], [0.12, 0.35, 0.1],
+  ];
+  context.fillStyle = "#ffe7a5";
+  context.strokeStyle = "rgba(139,67,29,.45)";
+  context.lineWidth = Math.max(1, safeWidth * 0.008);
+  seeds.forEach(([seedX, seedY, rotation]) => {
+    context.save();
+    context.translate(safeWidth * seedX, safeHeight * seedY);
+    context.rotate(rotation);
+    context.beginPath();
+    context.ellipse(0, 0, safeWidth * 0.026, safeHeight * 0.047, 0, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    context.restore();
+  });
+
+  context.fillStyle = "rgba(255,255,255,.34)";
+  context.beginPath();
+  context.ellipse(-safeWidth * 0.2, -safeHeight * 0.08, safeWidth * 0.075, safeHeight * 0.18, -0.46, 0, Math.PI * 2);
+  context.fill();
+
+  context.translate(0, -safeHeight * 0.34);
+  context.fillStyle = "#59db6f";
+  context.strokeStyle = "#17683a";
+  context.lineWidth = Math.max(2, safeWidth * 0.018);
+  [-1.1, -0.55, 0, 0.55, 1.1].forEach((rotation, index) => {
+    context.save();
+    context.rotate(rotation * 0.46);
+    context.beginPath();
+    context.moveTo(0, safeHeight * 0.055);
+    context.quadraticCurveTo(safeWidth * (index % 2 ? 0.2 : 0.15), -safeHeight * 0.12, 0, -safeHeight * (index === 2 ? 0.28 : 0.2));
+    context.quadraticCurveTo(-safeWidth * (index % 2 ? 0.16 : 0.12), -safeHeight * 0.1, 0, safeHeight * 0.055);
+    context.closePath();
+    context.fill();
+    context.stroke();
+    context.restore();
+  });
   context.restore();
 }
 
@@ -954,9 +1051,24 @@ export function GameCanvas({
       });
 
       const frame = trackingRef.current;
-      const head = frame.head ?? { x: 0.5, y: 0.15 };
-      const headPoint = toWorld(head, width, height, frame.source, videoRef.current);
-      drawHeadTarget(context, headPoint.x, Math.max(62, headPoint.y), engine.target, now, engine.frenzyUntil > now);
+      if (frame.source === "camera" && frame.head) {
+        const headPoint = toWorld(frame.head, width, height, frame.source, videoRef.current);
+        const headSize = toWorldSize(frame.head, width, height, frame.source, videoRef.current);
+        drawStrawberryHead(context, headPoint.x, headPoint.y, headSize.width, headSize.height, now);
+        const targetY = Math.max(62, headPoint.y - headSize.height * 0.5 - 28);
+        drawHeadTarget(context, headPoint.x, targetY, engine.target, now, engine.frenzyUntil > now);
+      } else if (frame.source === "demo") {
+        const head = frame.head ?? { x: 0.5, y: 0.15, width: 0.16, height: 0.22 };
+        const headPoint = toWorld(head, width, height, frame.source, videoRef.current);
+        if (SHOW_STRAWBERRY_PREVIEW) {
+          const headSize = toWorldSize(head, width, height, frame.source, videoRef.current);
+          drawStrawberryHead(context, headPoint.x, headPoint.y + headSize.height * 0.64, headSize.width, headSize.height, now);
+          const targetY = Math.max(62, headPoint.y - headSize.height * 0.18);
+          drawHeadTarget(context, headPoint.x, targetY, engine.target, now, engine.frenzyUntil > now);
+        } else {
+          drawHeadTarget(context, headPoint.x, Math.max(62, headPoint.y), engine.target, now, engine.frenzyUntil > now);
+        }
+      }
       frame.hands.forEach((hand) => {
         const point = toWorld(hand, width, height, frame.source, videoRef.current);
         drawHand(context, point.x, point.y, hand.closed, hand.id, now);
