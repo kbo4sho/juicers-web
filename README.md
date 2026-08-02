@@ -14,7 +14,7 @@ Use current desktop Chrome or Edge over `https://` (or `localhost`).
 
 1. Choose **Play with camera** and approve browser camera access.
 2. Step back until your face and both hands fit in frame.
-3. A strawberry character replaces your head, scales with your detected face, and reacts to pops, combos, powerups, and mistakes; match the fruit badge floating above it.
+3. A strawberry mask replaces your head and scales with your detected face; match the fruit badge floating above it.
 4. Overlap a falling fruit with either cartoon glove, then close and reopen your fist. The glove changes from an open palm to a popping fist.
 
 ### Demo mode

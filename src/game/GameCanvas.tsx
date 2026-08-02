@@ -15,7 +15,6 @@ import {
 import type { TrackedPoint, TrackingFrame } from "./tracking";
 
 type Phase = "tutorial" | "countdown" | "playing" | "results";
-type CharacterMood = "idle" | "happy" | "celebrate" | "power" | "oops";
 
 type Props = {
   phase: Phase;
@@ -95,9 +94,6 @@ type Engine = {
   misses: number;
   target: FruitKind;
   previousClosed: { left: boolean; right: boolean };
-  characterMood: CharacterMood;
-  characterMoodStartedAt: number;
-  characterMoodUntil: number;
   frenzyUntil: number;
   freezeUntil: number;
   flash: { color: string; amount: number };
@@ -106,13 +102,7 @@ type Engine = {
 };
 
 const ROUND_SECONDS = 60;
-const CHARACTER_MOODS: CharacterMood[] = ["idle", "happy", "celebrate", "power", "oops"];
-const PREVIEW_PARAMS = import.meta.env.DEV ? new URLSearchParams(window.location.search) : null;
-const SHOW_STRAWBERRY_PREVIEW = PREVIEW_PARAMS?.has("strawberryPreview") ?? false;
-const requestedPreviewMood = PREVIEW_PARAMS?.get("characterMood") ?? null;
-const CHARACTER_PREVIEW_MOOD = CHARACTER_MOODS.includes(requestedPreviewMood as CharacterMood)
-  ? requestedPreviewMood as CharacterMood
-  : null;
+const SHOW_STRAWBERRY_PREVIEW = import.meta.env.DEV && new URLSearchParams(window.location.search).has("strawberryPreview");
 
 function newEngine(seed: number): Engine {
   const random = createSeededRandom(seed);
@@ -134,21 +124,12 @@ function newEngine(seed: number): Engine {
     misses: 0,
     target: FRUITS[Math.floor(random() * FRUITS.length)],
     previousClosed: { left: false, right: false },
-    characterMood: "idle",
-    characterMoodStartedAt: 0,
-    characterMoodUntil: 0,
     frenzyUntil: 0,
     freezeUntil: 0,
     flash: { color: "#ffffff", amount: 0 },
     shake: 0,
     lastHudUpdate: 0,
   };
-}
-
-function reactCharacter(engine: Engine, mood: CharacterMood, now: number, duration: number) {
-  engine.characterMood = mood;
-  engine.characterMoodStartedAt = now;
-  engine.characterMoodUntil = now + duration;
 }
 
 function roundedRect(
@@ -479,22 +460,13 @@ function drawStrawberryHead(
   width: number,
   height: number,
   time: number,
-  mood: CharacterMood,
-  moodStartedAt: number,
-  moodUntil: number,
 ) {
   const safeWidth = Math.max(92, width);
   const safeHeight = Math.max(116, height);
-  const moodAge = Math.max(0, time - moodStartedAt);
-  const moodDuration = Math.max(1, moodUntil - moodStartedAt);
-  const moodProgress = Math.min(1, moodAge / moodDuration);
-  const reactionBounce = mood === "idle" ? 0 : Math.sin(Math.min(1, moodProgress * 1.8) * Math.PI);
-  const celebrateBounce = mood === "celebrate" || mood === "power" ? reactionBounce * 0.08 : reactionBounce * 0.045;
   const pulse = 1 + Math.sin(time * 0.0032) * 0.008;
   context.save();
   context.translate(x, y);
-  context.translate(0, -safeHeight * celebrateBounce * 0.34);
-  context.scale(pulse + celebrateBounce, pulse - celebrateBounce * 0.38);
+  context.scale(pulse, pulse);
   context.shadowColor = "rgba(255,48,104,.62)";
   context.shadowBlur = Math.min(46, safeWidth * 0.2);
   context.shadowOffsetY = safeHeight * 0.035;
@@ -544,119 +516,6 @@ function drawStrawberryHead(
   context.ellipse(-safeWidth * 0.2, -safeHeight * 0.08, safeWidth * 0.075, safeHeight * 0.18, -0.46, 0, Math.PI * 2);
   context.fill();
 
-  const faceColor = "#34132f";
-  const eyeY = -safeHeight * 0.04;
-  const eyeX = safeWidth * 0.155;
-  const eyeRadius = Math.max(4.5, safeWidth * 0.038);
-  const blink = mood === "idle" && time % 3300 > 3160;
-  context.lineCap = "round";
-  context.lineJoin = "round";
-  context.strokeStyle = faceColor;
-  context.fillStyle = faceColor;
-  context.lineWidth = Math.max(3.2, safeWidth * 0.028);
-
-  if (mood === "happy" || mood === "celebrate") {
-    [-eyeX, eyeX].forEach((faceX) => {
-      context.beginPath();
-      context.arc(faceX, eyeY + safeHeight * 0.018, eyeRadius * 1.18, Math.PI * 1.08, Math.PI * 1.92);
-      context.stroke();
-    });
-  } else if (mood === "power") {
-    [-eyeX, eyeX].forEach((faceX) => {
-      context.save();
-      context.translate(faceX, eyeY);
-      context.rotate(Math.PI / 10);
-      context.beginPath();
-      for (let point = 0; point < 10; point += 1) {
-        const angle = -Math.PI / 2 + point * Math.PI / 5;
-        const radius = point % 2 === 0 ? eyeRadius * 1.5 : eyeRadius * 0.66;
-        const starX = Math.cos(angle) * radius;
-        const starY = Math.sin(angle) * radius;
-        if (point === 0) context.moveTo(starX, starY);
-        else context.lineTo(starX, starY);
-      }
-      context.closePath();
-      context.fillStyle = "#fff39a";
-      context.fill();
-      context.stroke();
-      context.restore();
-    });
-  } else if (blink) {
-    [-eyeX, eyeX].forEach((faceX) => {
-      context.beginPath();
-      context.moveTo(faceX - eyeRadius, eyeY);
-      context.quadraticCurveTo(faceX, eyeY + eyeRadius * 0.5, faceX + eyeRadius, eyeY);
-      context.stroke();
-    });
-  } else {
-    [-eyeX, eyeX].forEach((faceX) => {
-      context.beginPath();
-      context.ellipse(faceX, eyeY, eyeRadius, mood === "oops" ? eyeRadius * 1.36 : eyeRadius * 1.18, 0, 0, Math.PI * 2);
-      context.fill();
-      context.fillStyle = "#fff";
-      context.beginPath();
-      context.arc(faceX - eyeRadius * 0.3, eyeY - eyeRadius * 0.34, eyeRadius * 0.29, 0, Math.PI * 2);
-      context.fill();
-      context.fillStyle = faceColor;
-    });
-  }
-
-  const mouthY = safeHeight * 0.095;
-  if (mood === "happy" || mood === "celebrate" || mood === "power") {
-    const mouthWidth = safeWidth * (mood === "happy" ? 0.15 : 0.19);
-    const mouthHeight = safeHeight * (mood === "happy" ? 0.12 : 0.17);
-    context.beginPath();
-    context.moveTo(-mouthWidth, mouthY - mouthHeight * 0.2);
-    context.quadraticCurveTo(0, mouthY + mouthHeight * 1.25, mouthWidth, mouthY - mouthHeight * 0.2);
-    context.quadraticCurveTo(0, mouthY + mouthHeight * 0.2, -mouthWidth, mouthY - mouthHeight * 0.2);
-    context.closePath();
-    context.fillStyle = faceColor;
-    context.fill();
-    context.stroke();
-    context.fillStyle = "#ff83a8";
-    context.beginPath();
-    context.ellipse(0, mouthY + mouthHeight * 0.63, mouthWidth * 0.52, mouthHeight * 0.28, 0, 0, Math.PI * 2);
-    context.fill();
-  } else if (mood === "oops") {
-    context.beginPath();
-    context.ellipse(0, mouthY + safeHeight * 0.025, safeWidth * 0.045, safeHeight * 0.055, 0, 0, Math.PI * 2);
-    context.fillStyle = faceColor;
-    context.fill();
-  } else {
-    context.beginPath();
-    context.moveTo(-safeWidth * 0.105, mouthY);
-    context.quadraticCurveTo(0, mouthY + safeHeight * 0.09, safeWidth * 0.105, mouthY);
-    context.stroke();
-  }
-
-  if (mood === "happy" || mood === "celebrate") {
-    context.globalAlpha = 0.62;
-    context.fillStyle = "#ffb2bd";
-    [-1, 1].forEach((side) => {
-      context.beginPath();
-      context.ellipse(side * safeWidth * 0.285, safeHeight * 0.082, safeWidth * 0.052, safeHeight * 0.026, 0, 0, Math.PI * 2);
-      context.fill();
-    });
-    context.globalAlpha = 1;
-  }
-
-  if (mood === "celebrate" || mood === "power") {
-    const sparkleColor = mood === "power" ? "#fff39a" : "#fff4cf";
-    context.fillStyle = sparkleColor;
-    [-1, 1].forEach((side) => {
-      const sparkleX = side * safeWidth * 0.48;
-      const sparkleY = -safeHeight * (side === -1 ? 0.02 : 0.17);
-      const sparkle = Math.max(6, safeWidth * 0.055) * (0.82 + Math.sin(time * 0.014 + side) * 0.18);
-      context.beginPath();
-      context.moveTo(sparkleX, sparkleY - sparkle);
-      context.quadraticCurveTo(sparkleX, sparkleY, sparkleX + sparkle, sparkleY);
-      context.quadraticCurveTo(sparkleX, sparkleY, sparkleX, sparkleY + sparkle);
-      context.quadraticCurveTo(sparkleX, sparkleY, sparkleX - sparkle, sparkleY);
-      context.quadraticCurveTo(sparkleX, sparkleY, sparkleX, sparkleY - sparkle);
-      context.fill();
-    });
-  }
-
   context.translate(0, -safeHeight * 0.34);
   context.fillStyle = "#59db6f";
   context.strokeStyle = "#17683a";
@@ -702,6 +561,8 @@ function drawHand(
   context.globalAlpha = 1;
   context.shadowBlur = 0;
 
+  context.save();
+  if (id === "left") context.scale(-1, 1);
   const glove = new Path2D();
   if (closed) {
     glove.moveTo(-31, 20);
@@ -778,6 +639,7 @@ function drawHand(
     context.quadraticCurveTo(-20, -3, -17, 5);
     context.stroke();
   }
+  context.restore();
 
   context.fillStyle = accent;
   context.strokeStyle = "#321432";
@@ -1055,7 +917,6 @@ export function GameCanvas({
           scale: 1.2,
         });
         engine.flash = { color, amount: 0.38 };
-        reactCharacter(engine, "power", now, 1100);
         juiceAudio.play("power");
         callbackRef.current.onAnnounce(kind === "freeze" ? "Chill Flow activated for six seconds" : "Juice Rush activated: any fruit is double points");
         return;
@@ -1085,7 +946,6 @@ export function GameCanvas({
         });
         engine.flash = { color: meta.splash, amount: 0.22 };
         engine.shake = Math.min(11, 3 + engine.combo * 0.7);
-        reactCharacter(engine, engine.combo >= 4 ? "celebrate" : "happy", now, engine.combo >= 4 ? 1000 : 760);
         engine.target = nextTarget(engine.target, engine.random);
         juiceAudio.play("correct");
         callbackRef.current.onAnnounce(`${meta.label} matched. Plus ${scored.delta}. Combo ${engine.combo}. New target ${FRUIT_META[engine.target].label}.`);
@@ -1105,7 +965,6 @@ export function GameCanvas({
         });
         engine.flash = { color: "#ff244f", amount: 0.4 };
         engine.shake = 16;
-        reactCharacter(engine, "oops", now, 720);
         juiceAudio.play("wrong");
         callbackRef.current.onAnnounce(`Wrong fruit. ${Math.abs(scored.delta)} point penalty. Combo reset. Target is still ${FRUIT_META[engine.target].label}.`);
       }
@@ -1273,15 +1132,10 @@ export function GameCanvas({
       });
 
       const frame = trackingRef.current;
-      const activeMood = now < engine.characterMoodUntil ? engine.characterMood : "idle";
-      const previewMood = frame.source === "demo" && SHOW_STRAWBERRY_PREVIEW ? CHARACTER_PREVIEW_MOOD : null;
-      const characterMood = previewMood ?? activeMood;
-      const moodStartedAt = previewMood ? now - 220 : engine.characterMoodStartedAt;
-      const moodUntil = previewMood ? now + 780 : engine.characterMoodUntil;
       if (frame.source === "camera" && frame.head) {
         const headPoint = toWorld(frame.head, width, height, frame.source, videoRef.current);
         const headSize = toWorldSize(frame.head, width, height, frame.source, videoRef.current);
-        drawStrawberryHead(context, headPoint.x, headPoint.y, headSize.width, headSize.height, now, characterMood, moodStartedAt, moodUntil);
+        drawStrawberryHead(context, headPoint.x, headPoint.y, headSize.width, headSize.height, now);
         const targetY = Math.max(62, headPoint.y - headSize.height * 0.5 - 28);
         drawHeadTarget(context, headPoint.x, targetY, engine.target, now, engine.frenzyUntil > now);
       } else if (frame.source === "demo") {
@@ -1289,7 +1143,7 @@ export function GameCanvas({
         const headPoint = toWorld(head, width, height, frame.source, videoRef.current);
         if (SHOW_STRAWBERRY_PREVIEW) {
           const headSize = toWorldSize(head, width, height, frame.source, videoRef.current);
-          drawStrawberryHead(context, headPoint.x, headPoint.y + headSize.height * 0.64, headSize.width, headSize.height, now, characterMood, moodStartedAt, moodUntil);
+          drawStrawberryHead(context, headPoint.x, headPoint.y + headSize.height * 0.64, headSize.width, headSize.height, now);
           const targetY = Math.max(62, headPoint.y - headSize.height * 0.18);
           drawHeadTarget(context, headPoint.x, targetY, engine.target, now, engine.frenzyUntil > now);
         } else {
