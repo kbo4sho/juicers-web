@@ -1,4 +1,4 @@
-export type SoundName = "start" | "tick" | "correct" | "wrong" | "power" | "finish" | "close";
+export type SoundName = "start" | "tick" | "correct" | "order" | "wrong" | "power" | "finish" | "close";
 
 class JuiceAudio {
   private context: AudioContext | null = null;
@@ -29,6 +29,11 @@ class JuiceAudio {
       this.tone(330, 620, now, 0.13, "sine", 0.12);
       this.tone(660, 910, now + 0.06, 0.1, "triangle", 0.08);
       this.noise(now, 0.05, 0.045);
+    } else if (name === "order") {
+      [523, 659, 784, 1047].forEach((frequency, index) =>
+        this.tone(frequency, frequency * 1.08, now + index * 0.065, 0.2, index % 2 ? "sine" : "triangle", 0.09),
+      );
+      this.noise(now + 0.08, 0.18, 0.065);
     } else if (name === "wrong") {
       this.tone(170, 92, now, 0.24, "sawtooth", 0.09);
       this.noise(now, 0.16, 0.08);

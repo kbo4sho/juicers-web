@@ -4,9 +4,9 @@ import {
   createSeededRandom,
   FRUIT_META,
   FRUITS,
-  nextTarget,
   rankForScore,
   scoreJuice,
+  type CustomerOrderSnapshot,
   type FruitKind,
   type PowerKind,
   type RoundResult,
@@ -21,7 +21,6 @@ type Props = {
   playToken: number;
   roundNumber: number;
   countdown: number;
-  videoRef: React.RefObject<HTMLVideoElement | null>;
   trackingRef: React.RefObject<TrackingFrame>;
   cameraActive: boolean;
   onSnapshot: (snapshot: RoundSnapshot) => void;
@@ -76,6 +75,10 @@ type Splatter = {
   points: number[];
 };
 
+type CustomerOrder = CustomerOrderSnapshot & {
+  completedUntil: number;
+};
+
 type Engine = {
   running: boolean;
   startedAt: number;
@@ -92,7 +95,10 @@ type Engine = {
   bestCombo: number;
   correct: number;
   misses: number;
-  target: FruitKind;
+  orders: CustomerOrder[];
+  orderId: number;
+  ordersCompleted: number;
+  orderStreak: number;
   previousClosed: { left: boolean; right: boolean };
   frenzyUntil: number;
   freezeUntil: number;
@@ -102,7 +108,38 @@ type Engine = {
 };
 
 const ROUND_SECONDS = 60;
-const SHOW_STRAWBERRY_PREVIEW = import.meta.env.DEV && new URLSearchParams(window.location.search).has("strawberryPreview");
+const FRUIT_SPRITES: Partial<Record<FruitKind, HTMLImageElement>> = {};
+
+if (typeof Image !== "undefined") {
+  FRUITS.forEach((kind) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.src = `${import.meta.env.BASE_URL}fruits/${kind}.webp`;
+    FRUIT_SPRITES[kind] = image;
+  });
+}
+
+const CUSTOMERS = [
+  { name: "Maya", accent: "#ff789f" },
+  { name: "Theo", accent: "#65dfca" },
+  { name: "Jo", accent: "#ffbf4d" },
+  { name: "Nico", accent: "#a38bff" },
+  { name: "Zara", accent: "#7ad5ff" },
+  { name: "Remy", accent: "#b7ef63" },
+] as const;
+
+const DRINKS: { name: string; ingredients: FruitKind[] }[] = [
+  { name: "Citrus Pop", ingredients: ["orange", "lime"] },
+  { name: "Berry Glow", ingredients: ["berry", "orange"] },
+  { name: "Melon Mist", ingredients: ["melon", "lime"] },
+  { name: "Golden Crush", ingredients: ["pineapple", "orange"] },
+  { name: "Sunset Splash", ingredients: ["orange", "berry", "pineapple"] },
+  { name: "Green Machine", ingredients: ["lime", "melon", "pineapple"] },
+  { name: "Pink Paradise", ingredients: ["berry", "melon", "orange"] },
+  { name: "Tropic Thunder", ingredients: ["pineapple", "orange", "lime", "melon"] },
+  { name: "Rainbow Rush", ingredients: ["berry", "lime", "orange", "pineapple"] },
+  { name: "Juicer Deluxe", ingredients: ["melon", "berry", "pineapple", "lime"] },
+];
 
 function newEngine(seed: number): Engine {
   const random = createSeededRandom(seed);
@@ -122,7 +159,10 @@ function newEngine(seed: number): Engine {
     bestCombo: 0,
     correct: 0,
     misses: 0,
-    target: FRUITS[Math.floor(random() * FRUITS.length)],
+    orders: [],
+    orderId: 1,
+    ordersCompleted: 0,
+    orderStreak: 0,
     previousClosed: { left: false, right: false },
     frenzyUntil: 0,
     freezeUntil: 0,
@@ -130,6 +170,33 @@ function newEngine(seed: number): Engine {
     shake: 0,
     lastHudUpdate: 0,
   };
+}
+
+function createOrder(engine: Engine, elapsed: number): CustomerOrder {
+  const maxIngredients = elapsed < 14 ? 2 : elapsed < 38 ? 3 : 4;
+  const eligible = DRINKS.filter((drink) => drink.ingredients.length <= maxIngredients);
+  const previousDrink = engine.orders.at(-1)?.drink;
+  const choices = eligible.filter((drink) => drink.name !== previousDrink);
+  const drink = choices[Math.floor(engine.random() * choices.length)] ?? eligible[0];
+  const customer = CUSTOMERS[(engine.orderId - 1) % CUSTOMERS.length];
+  const order: CustomerOrder = {
+    id: engine.orderId,
+    customer: customer.name,
+    drink: drink.name,
+    accent: customer.accent,
+    ingredients: [...drink.ingredients],
+    filled: drink.ingredients.map(() => false),
+    completed: false,
+    completedUntil: 0,
+  };
+  engine.orderId += 1;
+  return order;
+}
+
+function refreshOrders(engine: Engine, now: number, elapsed: number) {
+  engine.orders = engine.orders.filter((order) => !order.completed || now < order.completedUntil);
+  const desiredOrders = elapsed < 22 ? 3 : 4;
+  while (engine.orders.length < desiredOrders) engine.orders.push(createOrder(engine, elapsed));
 }
 
 function roundedRect(
@@ -145,7 +212,7 @@ function roundedRect(
   context.roundRect(x, y, width, height, safeRadius);
 }
 
-function drawFruit(
+function drawFallbackFruit(
   context: CanvasRenderingContext2D,
   kind: FruitKind,
   x: number,
@@ -276,6 +343,31 @@ function drawFruit(
   context.restore();
 }
 
+function drawFruit(
+  context: CanvasRenderingContext2D,
+  kind: FruitKind,
+  x: number,
+  y: number,
+  radius: number,
+  rotation = 0,
+) {
+  const sprite = FRUIT_SPRITES[kind];
+  if (!sprite?.complete || sprite.naturalWidth === 0) {
+    drawFallbackFruit(context, kind, x, y, radius, rotation);
+    return;
+  }
+
+  const size = radius * (kind === "pineapple" ? 3.55 : 3.25);
+  context.save();
+  context.translate(x, y);
+  context.rotate(rotation);
+  context.shadowColor = "rgba(20,8,32,.42)";
+  context.shadowBlur = radius * 0.34;
+  context.shadowOffsetY = radius * 0.18;
+  context.drawImage(sprite, -size / 2, -size / 2, size, size);
+  context.restore();
+}
+
 function drawPower(
   context: CanvasRenderingContext2D,
   kind: PowerKind,
@@ -326,213 +418,364 @@ function drawPower(
   context.restore();
 }
 
-function fitVideo(video: HTMLVideoElement, width: number, height: number) {
-  const videoWidth = video.videoWidth || 1280;
-  const videoHeight = video.videoHeight || 720;
-  const scale = Math.max(width / videoWidth, height / videoHeight);
-  const drawWidth = videoWidth * scale;
-  const drawHeight = videoHeight * scale;
-  return { x: (width - drawWidth) / 2, y: (height - drawHeight) / 2, width: drawWidth, height: drawHeight };
-}
-
-function toWorld(
-  point: TrackedPoint,
-  width: number,
-  height: number,
-  source: TrackingFrame["source"],
-  video: HTMLVideoElement | null,
-) {
-  if (source === "camera" && video) {
-    const fit = fitVideo(video, width, height);
-    return { x: fit.x + point.x * fit.width, y: fit.y + point.y * fit.height };
-  }
+function toWorld(point: TrackedPoint, width: number, height: number) {
   return { x: point.x * width, y: point.y * height };
 }
 
-function toWorldSize(
-  size: { width: number; height: number },
-  width: number,
-  height: number,
-  source: TrackingFrame["source"],
-  video: HTMLVideoElement | null,
+function drawDinerSpark(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  radius: number,
+  color: string,
+  alpha = 1,
 ) {
-  if (source === "camera" && video) {
-    const fit = fitVideo(video, width, height);
-    return { width: size.width * fit.width, height: size.height * fit.height };
+  context.save();
+  context.translate(x, y);
+  context.globalAlpha = alpha;
+  context.strokeStyle = "#321432";
+  context.fillStyle = color;
+  context.lineWidth = Math.max(2, radius * 0.13);
+  context.lineJoin = "round";
+  context.beginPath();
+  for (let point = 0; point < 16; point += 1) {
+    const angle = -Math.PI / 2 + (point / 16) * Math.PI * 2;
+    const pointRadius = point % 2 === 0 ? radius : radius * 0.34;
+    const pointX = Math.cos(angle) * pointRadius;
+    const pointY = Math.sin(angle) * pointRadius;
+    if (point === 0) context.moveTo(pointX, pointY);
+    else context.lineTo(pointX, pointY);
   }
-  return { width: size.width * width, height: size.height * height };
+  context.closePath();
+  context.fill();
+  context.stroke();
+  context.restore();
+}
+
+function drawMenuBoard(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  label: string,
+  accent: string,
+) {
+  const height = Math.max(86, width * 0.56);
+  const border = Math.max(5, width * 0.04);
+  context.save();
+
+  context.fillStyle = "rgba(22,8,29,.34)";
+  roundedRect(context, x + 7, y + 9, width, height, 13);
+  context.fill();
+
+  context.fillStyle = "#321432";
+  roundedRect(context, x, y, width, height, 13);
+  context.fill();
+
+  context.fillStyle = "#f3dfbd";
+  roundedRect(context, x + 3, y + 3, width - 6, height - 6, 10);
+  context.fill();
+
+  context.fillStyle = "#182c33";
+  roundedRect(context, x + border, y + border, width - border * 2, height - border * 2, 7);
+  context.fill();
+
+  // Slightly offset second keyline gives the sign the same print-built edge as the art.
+  context.strokeStyle = accent;
+  context.globalAlpha = 0.5;
+  context.lineWidth = 2;
+  roundedRect(context, x + border + 3, y + border + 3, width - border * 2 - 6, height - border * 2 - 6, 5);
+  context.stroke();
+  context.globalAlpha = 1;
+
+  const cupX = x + border + 15;
+  const cupY = y + border + 18;
+  context.strokeStyle = "#321432";
+  context.fillStyle = accent;
+  context.lineWidth = 2.5;
+  context.beginPath();
+  context.moveTo(cupX - 7, cupY - 7);
+  context.lineTo(cupX + 7, cupY - 7);
+  context.lineTo(cupX + 5, cupY + 8);
+  context.quadraticCurveTo(cupX, cupY + 12, cupX - 5, cupY + 8);
+  context.closePath();
+  context.fill();
+  context.stroke();
+  context.beginPath();
+  context.moveTo(cupX + 1, cupY - 8);
+  context.lineTo(cupX + 7, cupY - 18);
+  context.strokeStyle = "#f3dfbd";
+  context.lineWidth = 3;
+  context.stroke();
+
+  context.fillStyle = accent;
+  context.font = `950 ${Math.max(10, width * 0.078)}px "Arial Rounded MT Bold", system-ui`;
+  context.textAlign = "left";
+  context.textBaseline = "middle";
+  context.fillText(label, cupX + 16, cupY - 1, width - border * 2 - 44);
+
+  context.strokeStyle = "rgba(243,223,189,.58)";
+  context.lineCap = "round";
+  context.lineWidth = 2;
+  const rowStart = y + height * 0.58;
+  for (let row = 0; row < 3; row += 1) {
+    const lineY = rowStart + row * Math.max(10, height * 0.11);
+    context.beginPath();
+    context.moveTo(x + border + 13, lineY);
+    context.lineTo(x + width - border - (row === 1 ? 26 : 13), lineY);
+    context.stroke();
+    context.fillStyle = accent;
+    context.beginPath();
+    context.arc(x + width - border - 8, lineY, 2.3, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  drawDinerSpark(context, x + width - 11, y + 12, Math.max(7, width * 0.052), accent, 0.9);
+  context.restore();
+}
+
+function drawDinerStool(
+  context: CanvasRenderingContext2D,
+  x: number,
+  seatY: number,
+  scale: number,
+  accent: string,
+  floorY: number,
+) {
+  const seatWidth = 92 * scale;
+  const seatHeight = 32 * scale;
+  context.save();
+
+  context.strokeStyle = "#321432";
+  context.lineWidth = Math.max(5, 9 * scale);
+  context.lineCap = "round";
+  context.beginPath();
+  context.moveTo(x, seatY + seatHeight * 0.35);
+  context.lineTo(x, floorY + 12);
+  context.stroke();
+
+  context.strokeStyle = "#b9d4cd";
+  context.lineWidth = Math.max(2.5, 4 * scale);
+  context.beginPath();
+  context.moveTo(x - 1.5 * scale, seatY + seatHeight * 0.4);
+  context.lineTo(x - 1.5 * scale, floorY + 10);
+  context.stroke();
+
+  const footY = seatY + (floorY - seatY) * 0.67;
+  context.strokeStyle = "#321432";
+  context.lineWidth = Math.max(3.5, 6 * scale);
+  context.beginPath();
+  context.ellipse(x, footY, seatWidth * 0.36, seatHeight * 0.37, 0, 0, Math.PI * 2);
+  context.stroke();
+  context.strokeStyle = "#9ebfba";
+  context.lineWidth = Math.max(1.5, 2.4 * scale);
+  context.beginPath();
+  context.ellipse(x, footY - scale, seatWidth * 0.34, seatHeight * 0.31, 0, 0, Math.PI * 2);
+  context.stroke();
+
+  context.fillStyle = "#321432";
+  context.beginPath();
+  context.ellipse(x, seatY + 4 * scale, seatWidth * 0.53, seatHeight * 0.62, 0, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = accent;
+  context.beginPath();
+  context.ellipse(x, seatY, seatWidth * 0.47, seatHeight * 0.48, 0, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = "rgba(255,242,207,.28)";
+  context.beginPath();
+  context.ellipse(x - seatWidth * 0.12, seatY - seatHeight * 0.12, seatWidth * 0.22, seatHeight * 0.09, -0.08, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
 }
 
 function drawBackdrop(
   context: CanvasRenderingContext2D,
   width: number,
   height: number,
-  time: number,
-  cameraActive: boolean,
-  video: HTMLVideoElement | null,
 ) {
-  if (cameraActive && video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-    const fit = fitVideo(video, width, height);
-    context.save();
-    context.translate(width, 0);
-    context.scale(-1, 1);
-    context.drawImage(video, fit.x, fit.y, fit.width, fit.height);
-    context.restore();
-    const wash = context.createLinearGradient(0, 0, 0, height);
-    wash.addColorStop(0, "rgba(19,8,40,.62)");
-    wash.addColorStop(0.42, "rgba(29,12,49,.16)");
-    wash.addColorStop(1, "rgba(13,6,30,.72)");
-    context.fillStyle = wash;
-    context.fillRect(0, 0, width, height);
-  } else {
-    const gradient = context.createRadialGradient(width * 0.5, height * 0.34, 0, width * 0.5, height * 0.45, width * 0.85);
-    gradient.addColorStop(0, "#513270");
-    gradient.addColorStop(0.45, "#28143f");
-    gradient.addColorStop(1, "#100923");
-    context.fillStyle = gradient;
-    context.fillRect(0, 0, width, height);
-    context.globalAlpha = 0.15;
-    for (let index = 0; index < 13; index += 1) {
-      const x = ((index * 239 + time * (index % 2 ? 0.009 : -0.006)) % (width + 180)) - 90;
-      const y = (index * 137) % height;
-      const radius = 34 + (index % 5) * 18;
-      context.strokeStyle = index % 3 === 0 ? "#ff65b3" : index % 3 === 1 ? "#62edc6" : "#ffb52d";
-      context.lineWidth = 2;
-      context.beginPath();
-      context.arc(x, y, radius, 0, Math.PI * 2);
-      context.stroke();
-      context.beginPath();
-      context.arc(x, y, radius * 0.72, 0, Math.PI * 2);
-      context.stroke();
-    }
+  const ink = "#321432";
+  const cream = "#f3dfbd";
+  const coral = "#ed5a50";
+  const mint = "#66d9c0";
+  const wallBottom = height * 0.72;
+
+  context.fillStyle = "#10333b";
+  context.fillRect(0, 0, width, height);
+
+  const wallGlow = context.createRadialGradient(
+    width * 0.5,
+    height * 0.32,
+    0,
+    width * 0.5,
+    height * 0.4,
+    Math.max(width * 0.62, height * 0.74),
+  );
+  wallGlow.addColorStop(0, "#397d75");
+  wallGlow.addColorStop(0.48, "#245b5b");
+  wallGlow.addColorStop(1, "#10333b");
+  context.fillStyle = wallGlow;
+  context.fillRect(0, 0, width, wallBottom);
+
+  // Large cel-shaded wall tiles keep the center readable while giving the room a drawn set.
+  context.save();
+  const tile = Math.max(50, Math.min(72, width * 0.052));
+  const tileOffset = tile * 0.42;
+  context.strokeStyle = "rgba(19,52,57,.55)";
+  context.lineWidth = 2;
+  for (let y = tileOffset; y < wallBottom; y += tile) {
+    context.beginPath();
+    context.moveTo(0, y);
+    context.lineTo(width, y);
+    context.stroke();
+  }
+  for (let x = 0; x < width; x += tile) {
+    context.beginPath();
+    context.moveTo(x, 0);
+    context.lineTo(x, wallBottom);
+    context.stroke();
+  }
+  context.strokeStyle = "rgba(117,213,194,.2)";
+  context.lineWidth = 1.5;
+  for (let y = tileOffset + 3; y < wallBottom; y += tile) {
+    context.beginPath();
+    context.moveTo(0, y);
+    context.lineTo(width, y);
+    context.stroke();
+  }
+  for (let x = 3; x < width; x += tile) {
+    context.beginPath();
+    context.moveTo(x, 0);
+    context.lineTo(x, wallBottom);
+    context.stroke();
+  }
+  context.restore();
+
+  // Framed service window: thick plum linework, offset coral ink, and a clean fall zone.
+  const windowMargin = Math.max(122, Math.min(238, width * 0.19));
+  const windowX = windowMargin;
+  const windowY = Math.max(168, height * 0.205);
+  const windowWidth = Math.max(180, width - windowMargin * 2);
+  const windowHeight = wallBottom - windowY + 5;
+  if (windowWidth > 250) {
+    context.fillStyle = "rgba(8,35,42,.24)";
+    roundedRect(context, windowX + 8, windowY + 9, windowWidth, windowHeight, 16);
+    context.fill();
+    context.strokeStyle = ink;
+    context.lineWidth = 11;
+    roundedRect(context, windowX, windowY, windowWidth, windowHeight, 14);
+    context.stroke();
+    context.strokeStyle = cream;
+    context.lineWidth = 5;
+    roundedRect(context, windowX, windowY - 2, windowWidth, windowHeight, 13);
+    context.stroke();
+    context.strokeStyle = coral;
+    context.globalAlpha = 0.56;
+    context.lineWidth = 2.5;
+    roundedRect(context, windowX + 5, windowY + 3, windowWidth - 10, windowHeight - 8, 9);
+    context.stroke();
     context.globalAlpha = 1;
   }
 
-  const vignette = context.createRadialGradient(width / 2, height / 2, Math.min(width, height) * 0.25, width / 2, height / 2, width * 0.8);
-  vignette.addColorStop(0, "rgba(12,4,24,0)");
-  vignette.addColorStop(1, "rgba(8,3,20,.62)");
+  // Chrome ticket rail and checker inlay bridge the HTML order cards into the canvas world.
+  const railY = Math.max(196, height * 0.245);
+  context.fillStyle = ink;
+  context.fillRect(0, railY - 7, width, 30);
+  context.fillStyle = cream;
+  context.fillRect(0, railY - 3, width, 20);
+  const checkerWidth = Math.max(25, Math.min(42, width * 0.031));
+  for (let x = -checkerWidth; x < width + checkerWidth; x += checkerWidth) {
+    const column = Math.floor(x / checkerWidth);
+    context.fillStyle = column % 2 === 0 ? coral : "#fff0cb";
+    context.fillRect(x, railY - 1, checkerWidth, 16);
+  }
+  context.fillStyle = "rgba(255,255,255,.72)";
+  context.fillRect(0, railY - 4, width, 3);
+  context.fillStyle = mint;
+  context.globalAlpha = 0.45;
+  context.fillRect(0, railY + 15, width, 2);
+  context.globalAlpha = 1;
+
+  const menuY = Math.max(274, height * 0.345);
+  const menuWidth = Math.max(116, Math.min(184, width * 0.145));
+  const menuMargin = Math.max(18, width * 0.055);
+  drawMenuBoard(context, menuMargin, menuY, menuWidth, "FRESH PRESSED", mint);
+  drawMenuBoard(context, width - menuMargin - menuWidth, menuY, menuWidth, "HOUSE MIXES", "#ffc84c");
+
+  // Quiet side-wall story details: a pair of sconce starbursts stay outside the play focus.
+  const sparkRadius = Math.max(14, Math.min(23, width * 0.019));
+  drawDinerSpark(context, menuMargin + menuWidth * 0.5, menuY - 38, sparkRadius, "#ffc84c", 0.4);
+  drawDinerSpark(context, width - menuMargin - menuWidth * 0.5, menuY - 38, sparkRadius, coral, 0.38);
+
+  // Counter lip has three authored material layers: ink, cream laminate, and chrome shine.
+  context.fillStyle = ink;
+  context.fillRect(0, wallBottom - 9, width, 34);
+  context.fillStyle = cream;
+  context.fillRect(0, wallBottom - 4, width, 22);
+  context.fillStyle = "#bdc9c0";
+  context.fillRect(0, wallBottom + 1, width, 7);
+  context.fillStyle = "rgba(255,255,255,.78)";
+  context.fillRect(0, wallBottom + 1, width, 2.5);
+  context.fillStyle = coral;
+  context.fillRect(0, wallBottom + 11, width, 12);
+  context.fillStyle = "rgba(87,29,53,.25)";
+  for (let x = -34; x < width + 34; x += 76) context.fillRect(x, wallBottom + 12, 38, 10);
+
+  const counterGradient = context.createLinearGradient(0, wallBottom + 20, 0, height);
+  counterGradient.addColorStop(0, "#643047");
+  counterGradient.addColorStop(0.28, "#3d2139");
+  counterGradient.addColorStop(1, "#171c2c");
+  context.fillStyle = counterGradient;
+  context.fillRect(0, wallBottom + 23, width, height - wallBottom - 23);
+
+  // Panel seams and highlights make the bar front feel inked and cel shaded.
+  const panelWidth = Math.max(118, Math.min(190, width * 0.145));
+  context.strokeStyle = "rgba(20,10,29,.56)";
+  context.lineWidth = 4;
+  for (let x = panelWidth; x < width; x += panelWidth) {
+    context.beginPath();
+    context.moveTo(x, wallBottom + 26);
+    context.lineTo(x, height);
+    context.stroke();
+    context.strokeStyle = "rgba(245,151,137,.08)";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(x + 5, wallBottom + 27);
+    context.lineTo(x + 5, height);
+    context.stroke();
+    context.strokeStyle = "rgba(20,10,29,.56)";
+    context.lineWidth = 4;
+  }
+
+  const seatY = height * 0.86;
+  const stoolScale = Math.max(0.72, Math.min(1, width / 1100));
+  drawDinerStool(context, width * 0.18, seatY, stoolScale, coral, height);
+  drawDinerStool(context, width * 0.5, seatY + height * 0.018, stoolScale, mint, height);
+  drawDinerStool(context, width * 0.82, seatY, stoolScale, coral, height);
+
+  // Subtle, deterministic ink/print freckles; denser near the edges so fruit remains crisp.
+  context.save();
+  context.fillStyle = "#f8dfb8";
+  for (let index = 0; index < 92; index += 1) {
+    const x = (index * 127 + 37) % Math.max(1, Math.floor(width));
+    const y = (index * 83 + 19) % Math.max(1, Math.floor(wallBottom));
+    const edge = Math.min(x, width - x) / Math.max(1, width * 0.5);
+    context.globalAlpha = 0.025 + (1 - edge) * 0.04;
+    context.beginPath();
+    context.arc(x, y, index % 7 === 0 ? 1.5 : 0.8, 0, Math.PI * 2);
+    context.fill();
+  }
+  context.restore();
+
+  const vignette = context.createRadialGradient(width / 2, height / 2, Math.min(width, height) * 0.2, width / 2, height / 2, width * 0.78);
+  vignette.addColorStop(0, "rgba(9,23,29,0)");
+  vignette.addColorStop(0.66, "rgba(8,10,20,.05)");
+  vignette.addColorStop(1, "rgba(8,10,20,.52)");
   context.fillStyle = vignette;
   context.fillRect(0, 0, width, height);
 
-  context.fillStyle = "rgba(255,255,255,.025)";
-  for (let x = 0; x < width; x += 38) context.fillRect(x, 0, 1, height);
-}
-
-function drawHeadTarget(
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  target: FruitKind,
-  time: number,
-  frenzy: boolean,
-) {
-  const radius = 45 + Math.sin(time * 0.004) * 2;
-  context.save();
-  context.translate(x, y);
-  context.shadowBlur = frenzy ? 38 : 24;
-  context.shadowColor = frenzy ? "#ffdc54" : FRUIT_META[target].splash;
-  context.fillStyle = frenzy ? "rgba(255,202,55,.93)" : "rgba(21,10,39,.88)";
-  context.beginPath();
-  context.arc(0, 0, radius, 0, Math.PI * 2);
-  context.fill();
-  context.shadowBlur = 0;
-  context.strokeStyle = frenzy ? "#fff6a4" : "rgba(255,255,255,.86)";
-  context.lineWidth = 4;
-  context.setLineDash([8, 7]);
-  context.lineDashOffset = -time * 0.02;
-  context.beginPath();
-  context.arc(0, 0, radius - 4, 0, Math.PI * 2);
-  context.stroke();
-  context.setLineDash([]);
-  drawFruit(context, target, 0, 1, 25, Math.sin(time * 0.002) * 0.08);
-  context.fillStyle = "#fff";
-  context.font = "900 10px system-ui";
-  context.textAlign = "center";
-  context.letterSpacing = "1.6px";
-  context.fillText(frenzy ? "ANY FRUIT ×2" : "MATCH ME", 0, radius + 18);
-  context.restore();
-}
-
-function drawStrawberryHead(
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  time: number,
-) {
-  const safeWidth = Math.max(92, width);
-  const safeHeight = Math.max(116, height);
-  const pulse = 1 + Math.sin(time * 0.0032) * 0.008;
-  context.save();
-  context.translate(x, y);
-  context.scale(pulse, pulse);
-  context.shadowColor = "rgba(255,48,104,.62)";
-  context.shadowBlur = Math.min(46, safeWidth * 0.2);
-  context.shadowOffsetY = safeHeight * 0.035;
-
-  const body = new Path2D();
-  body.moveTo(-safeWidth * 0.44, -safeHeight * 0.28);
-  body.bezierCurveTo(-safeWidth * 0.52, -safeHeight * 0.02, -safeWidth * 0.3, safeHeight * 0.34, 0, safeHeight * 0.5);
-  body.bezierCurveTo(safeWidth * 0.3, safeHeight * 0.34, safeWidth * 0.52, -safeHeight * 0.02, safeWidth * 0.44, -safeHeight * 0.28);
-  body.bezierCurveTo(safeWidth * 0.3, -safeHeight * 0.44, safeWidth * 0.12, -safeHeight * 0.4, 0, -safeHeight * 0.29);
-  body.bezierCurveTo(-safeWidth * 0.12, -safeHeight * 0.4, -safeWidth * 0.3, -safeHeight * 0.44, -safeWidth * 0.44, -safeHeight * 0.28);
-  body.closePath();
-
-  const gradient = context.createRadialGradient(-safeWidth * 0.2, -safeHeight * 0.26, 0, 0, 0, safeHeight * 0.72);
-  gradient.addColorStop(0, "#ff9a9b");
-  gradient.addColorStop(0.23, "#ff486e");
-  gradient.addColorStop(0.7, "#e82355");
-  gradient.addColorStop(1, "#a80e3c");
-  context.fillStyle = gradient;
-  context.fill(body);
-  context.shadowColor = "transparent";
-  context.strokeStyle = "rgba(111,7,44,.5)";
-  context.lineWidth = Math.max(3, safeWidth * 0.025);
-  context.stroke(body);
-
-  const seeds = [
-    [-0.25, -0.2, -0.22], [0, -0.23, 0], [0.25, -0.2, 0.22],
-    [-0.34, -0.02, -0.28], [-0.1, 0, -0.1], [0.15, -0.01, 0.12], [0.34, 0.02, 0.28],
-    [-0.25, 0.19, -0.22], [0, 0.2, 0], [0.24, 0.2, 0.22],
-    [-0.12, 0.36, -0.1], [0.12, 0.35, 0.1],
-  ];
-  context.fillStyle = "#ffe7a5";
-  context.strokeStyle = "rgba(139,67,29,.45)";
-  context.lineWidth = Math.max(1, safeWidth * 0.008);
-  seeds.forEach(([seedX, seedY, rotation]) => {
-    context.save();
-    context.translate(safeWidth * seedX, safeHeight * seedY);
-    context.rotate(rotation);
-    context.beginPath();
-    context.ellipse(0, 0, safeWidth * 0.026, safeHeight * 0.047, 0, 0, Math.PI * 2);
-    context.fill();
-    context.stroke();
-    context.restore();
-  });
-
-  context.fillStyle = "rgba(255,255,255,.34)";
-  context.beginPath();
-  context.ellipse(-safeWidth * 0.2, -safeHeight * 0.08, safeWidth * 0.075, safeHeight * 0.18, -0.46, 0, Math.PI * 2);
-  context.fill();
-
-  context.translate(0, -safeHeight * 0.34);
-  context.fillStyle = "#59db6f";
-  context.strokeStyle = "#17683a";
-  context.lineWidth = Math.max(2, safeWidth * 0.018);
-  [-1.1, -0.55, 0, 0.55, 1.1].forEach((rotation, index) => {
-    context.save();
-    context.rotate(rotation * 0.46);
-    context.beginPath();
-    context.moveTo(0, safeHeight * 0.055);
-    context.quadraticCurveTo(safeWidth * (index % 2 ? 0.2 : 0.15), -safeHeight * 0.12, 0, -safeHeight * (index === 2 ? 0.28 : 0.2));
-    context.quadraticCurveTo(-safeWidth * (index % 2 ? 0.16 : 0.12), -safeHeight * 0.1, 0, safeHeight * 0.055);
-    context.closePath();
-    context.fill();
-    context.stroke();
-    context.restore();
-  });
-  context.restore();
+  // Fine vertical risograph grain ties the code-drawn room to the illustrated assets.
+  context.fillStyle = "rgba(255,244,218,.025)";
+  for (let x = 0; x < width; x += 41) context.fillRect(x, 0, 1, height);
 }
 
 function drawHand(
@@ -715,7 +958,13 @@ function snapshot(engine: Engine, now: number): RoundSnapshot {
     correct: engine.correct,
     misses: engine.misses,
     timeLeft: Math.max(0, ROUND_SECONDS - (now - engine.startedAt) / 1000),
-    target: engine.target,
+    orders: engine.orders.map(({ completedUntil: _completedUntil, ...order }) => ({
+      ...order,
+      ingredients: [...order.ingredients],
+      filled: [...order.filled],
+    })),
+    ordersCompleted: engine.ordersCompleted,
+    orderStreak: engine.orderStreak,
     frenzyLeft: Math.max(0, (engine.frenzyUntil - now) / 1000),
     freezeLeft: Math.max(0, (engine.freezeUntil - now) / 1000),
   };
@@ -726,7 +975,6 @@ export function GameCanvas({
   playToken,
   roundNumber,
   countdown,
-  videoRef,
   trackingRef,
   cameraActive,
   onSnapshot,
@@ -757,6 +1005,7 @@ export function GameCanvas({
     engine.startedAt = now;
     engine.lastFrame = now;
     engine.nextSpawnAt = now + 360;
+    refreshOrders(engine, now, 0);
     engineRef.current = engine;
     onSnapshot(snapshot(engine, now));
   }, [phase, playToken, roundNumber, onSnapshot]);
@@ -875,9 +1124,12 @@ export function GameCanvas({
           rotationSpeed: (engine.random() - 0.5) * 1.4,
         });
       } else {
-        const shouldMatch = engine.random() < 0.48;
+        const neededFruit = engine.orders
+          .filter((order) => !order.completed)
+          .flatMap((order) => order.ingredients.filter((_, index) => !order.filled[index]));
+        const shouldMatch = neededFruit.length > 0 && engine.random() < 0.68;
         const kind = shouldMatch
-          ? engine.target
+          ? neededFruit[Math.floor(engine.random() * neededFruit.length)]
           : FRUITS[Math.floor(engine.random() * FRUITS.length)];
         engine.items.push({
           id: engine.itemId++,
@@ -910,7 +1162,7 @@ export function GameCanvas({
           x,
           y,
           label: kind === "freeze" ? "CHILL FLOW" : "JUICE RUSH",
-          sublabel: kind === "freeze" ? "SLOW MOTION · 6 SEC" : "ANY FRUIT ×2 · 6 SEC",
+          sublabel: kind === "freeze" ? "SLOW MOTION · 6 SEC" : "DOUBLE TIPS · 6 SEC",
           color,
           life: 1.25,
           maxLife: 1.25,
@@ -918,18 +1170,24 @@ export function GameCanvas({
         });
         engine.flash = { color, amount: 0.38 };
         juiceAudio.play("power");
-        callbackRef.current.onAnnounce(kind === "freeze" ? "Chill Flow activated for six seconds" : "Juice Rush activated: any fruit is double points");
+        callbackRef.current.onAnnounce(kind === "freeze" ? "Chill Flow activated for six seconds" : "Juice Rush activated: matching fruit is double points");
         return;
       }
 
       const kind = item.kind as FruitKind;
       const frenzy = engine.frenzyUntil > now;
-      const correct = frenzy || kind === engine.target;
+      const matchingOrder = engine.orders.find((order) =>
+        !order.completed && order.ingredients.some((ingredient, index) => ingredient === kind && !order.filled[index]),
+      );
+      const ingredientIndex = matchingOrder?.ingredients.findIndex((ingredient, index) => ingredient === kind && !matchingOrder.filled[index]) ?? -1;
+      const correct = Boolean(matchingOrder && ingredientIndex >= 0);
       const scored = scoreJuice(engine.score, engine.combo, correct, frenzy);
       engine.score = scored.score;
       engine.combo = scored.combo;
       engine.bestCombo = Math.max(engine.bestCombo, engine.combo);
       if (correct) {
+        if (!matchingOrder || ingredientIndex < 0) return;
+        matchingOrder.filled[ingredientIndex] = true;
         engine.correct += 1;
         const meta = FRUIT_META[kind];
         addSplatter(engine, x, y, meta.splash, 72 + Math.min(28, engine.combo * 2));
@@ -946,11 +1204,37 @@ export function GameCanvas({
         });
         engine.flash = { color: meta.splash, amount: 0.22 };
         engine.shake = Math.min(11, 3 + engine.combo * 0.7);
-        engine.target = nextTarget(engine.target, engine.random);
-        juiceAudio.play("correct");
-        callbackRef.current.onAnnounce(`${meta.label} matched. Plus ${scored.delta}. Combo ${engine.combo}. New target ${FRUIT_META[engine.target].label}.`);
+        const orderComplete = matchingOrder.filled.every(Boolean);
+        if (orderComplete) {
+          const orderBonus = (300 + matchingOrder.ingredients.length * 125 + Math.min(500, engine.orderStreak * 75)) * (frenzy ? 2 : 1);
+          engine.score += orderBonus;
+          engine.ordersCompleted += 1;
+          engine.orderStreak += 1;
+          matchingOrder.completed = true;
+          matchingOrder.completedUntil = now + 950;
+          engine.texts.push({
+            x: width * 0.5,
+            y: Math.max(260, height * 0.43),
+            label: "ORDER UP!",
+            sublabel: `${matchingOrder.customer.toUpperCase()} · +${orderBonus} BONUS · ${engine.ordersCompleted} SERVED`,
+            color: "#fff279",
+            life: 1.45,
+            maxLife: 1.45,
+            scale: 1.45,
+          });
+          createParticles(engine, width * 0.5, height * 0.42, ["#fff279", meta.splash, "#77f6d4", "#ff569d", "#ffffff"], 64, "spark");
+          addSplatter(engine, width * 0.5, height * 0.42, matchingOrder.accent, 125);
+          engine.flash = { color: "#fff279", amount: 0.46 };
+          engine.shake = 18;
+          juiceAudio.play("order");
+          callbackRef.current.onAnnounce(`${matchingOrder.customer}'s ${matchingOrder.drink} complete. Order up! ${orderBonus} bonus points. ${engine.ordersCompleted} ${engine.ordersCompleted === 1 ? "order" : "orders"} served.`);
+        } else {
+          juiceAudio.play("correct");
+          callbackRef.current.onAnnounce(`${meta.label} added to ${matchingOrder.customer}'s ${matchingOrder.drink}. Plus ${scored.delta}. ${matchingOrder.filled.filter(Boolean).length} of ${matchingOrder.ingredients.length} ingredients filled.`);
+        }
       } else {
         engine.misses += 1;
+        engine.orderStreak = 0;
         addSplatter(engine, x, y, "#ff375f", 88);
         createParticles(engine, x, y, ["#ff375f", "#681e4c", "#ffd3da"], 23, "dot");
         engine.texts.push({
@@ -966,7 +1250,7 @@ export function GameCanvas({
         engine.flash = { color: "#ff244f", amount: 0.4 };
         engine.shake = 16;
         juiceAudio.play("wrong");
-        callbackRef.current.onAnnounce(`Wrong fruit. ${Math.abs(scored.delta)} point penalty. Combo reset. Target is still ${FRUIT_META[engine.target].label}.`);
+        callbackRef.current.onAnnounce(`No customer needs ${FRUIT_META[kind].label} right now. ${Math.abs(scored.delta)} point penalty. Combo reset.`);
       }
     };
 
@@ -983,12 +1267,13 @@ export function GameCanvas({
           bestCombo: engine.bestCombo,
           correct: engine.correct,
           misses: engine.misses,
-          target: engine.target,
+          ordersCompleted: engine.ordersCompleted,
           rank: rankForScore(engine.score),
         });
         return;
       }
 
+      refreshOrders(engine, now, elapsed);
       if (now >= engine.nextSpawnAt) spawn(engine, now, elapsed);
       const timeScale = engine.freezeUntil > now ? 0.44 : 1;
       engine.items.forEach((item) => {
@@ -1004,7 +1289,7 @@ export function GameCanvas({
         const justClosed = hand.closed && !engine.previousClosed[hand.id];
         engine.previousClosed[hand.id] = hand.closed;
         if (!justClosed) return;
-        const point = toWorld(hand, width, height, frame.source, videoRef.current);
+        const point = toWorld(hand, width, height);
         const nearest = engine.items
           .map((item) => ({ item, distance: Math.hypot(item.x * width - point.x, item.y - point.y) }))
           .filter(({ item, distance }) => distance <= item.radius + 46)
@@ -1122,7 +1407,7 @@ export function GameCanvas({
       const shakeX = engine.shake ? Math.sin(now * 0.19) * engine.shake * 0.5 : 0;
       const shakeY = engine.shake ? Math.cos(now * 0.23) * engine.shake * 0.5 : 0;
       context.translate(shakeX, shakeY);
-      drawBackdrop(context, width, height, now, cameraActive, videoRef.current);
+      drawBackdrop(context, width, height);
 
       drawEffects(engine);
       engine.items.forEach((item) => {
@@ -1132,26 +1417,8 @@ export function GameCanvas({
       });
 
       const frame = trackingRef.current;
-      if (frame.source === "camera" && frame.head) {
-        const headPoint = toWorld(frame.head, width, height, frame.source, videoRef.current);
-        const headSize = toWorldSize(frame.head, width, height, frame.source, videoRef.current);
-        drawStrawberryHead(context, headPoint.x, headPoint.y, headSize.width, headSize.height, now);
-        const targetY = Math.max(62, headPoint.y - headSize.height * 0.5 - 28);
-        drawHeadTarget(context, headPoint.x, targetY, engine.target, now, engine.frenzyUntil > now);
-      } else if (frame.source === "demo") {
-        const head = frame.head ?? { x: 0.5, y: 0.15, width: 0.16, height: 0.22 };
-        const headPoint = toWorld(head, width, height, frame.source, videoRef.current);
-        if (SHOW_STRAWBERRY_PREVIEW) {
-          const headSize = toWorldSize(head, width, height, frame.source, videoRef.current);
-          drawStrawberryHead(context, headPoint.x, headPoint.y + headSize.height * 0.64, headSize.width, headSize.height, now);
-          const targetY = Math.max(62, headPoint.y - headSize.height * 0.18);
-          drawHeadTarget(context, headPoint.x, targetY, engine.target, now, engine.frenzyUntil > now);
-        } else {
-          drawHeadTarget(context, headPoint.x, Math.max(62, headPoint.y), engine.target, now, engine.frenzyUntil > now);
-        }
-      }
       frame.hands.forEach((hand) => {
-        const point = toWorld(hand, width, height, frame.source, videoRef.current);
+        const point = toWorld(hand, width, height);
         drawHand(context, point.x, point.y, hand.closed, hand.id, now);
       });
       drawTexts(engine);
@@ -1193,7 +1460,7 @@ export function GameCanvas({
       cancelAnimationFrame(animationFrame);
       observer.disconnect();
     };
-  }, [cameraActive, trackingRef, videoRef]);
+  }, [cameraActive, trackingRef]);
 
   return (
     <canvas
