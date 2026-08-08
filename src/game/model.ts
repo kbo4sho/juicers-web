@@ -2,6 +2,16 @@ export const FRUITS = ["orange", "lime", "berry", "melon", "pineapple"] as const
 export type FruitKind = (typeof FRUITS)[number];
 export type PowerKind = "freeze" | "frenzy";
 
+export type CustomerOrderSnapshot = {
+  id: number;
+  customer: string;
+  drink: string;
+  accent: string;
+  ingredients: FruitKind[];
+  filled: boolean[];
+  completed: boolean;
+};
+
 export const FRUIT_META: Record<
   FruitKind,
   { label: string; color: string; dark: string; splash: string }
@@ -20,12 +30,14 @@ export type RoundSnapshot = {
   correct: number;
   misses: number;
   timeLeft: number;
-  target: FruitKind;
+  orders: CustomerOrderSnapshot[];
+  ordersCompleted: number;
+  orderStreak: number;
   frenzyLeft: number;
   freezeLeft: number;
 };
 
-export type RoundResult = Omit<RoundSnapshot, "timeLeft" | "frenzyLeft" | "freezeLeft"> & {
+export type RoundResult = Omit<RoundSnapshot, "timeLeft" | "orders" | "orderStreak" | "frenzyLeft" | "freezeLeft"> & {
   rank: string;
 };
 

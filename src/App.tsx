@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { juiceAudio } from "./game/audio";
 import { GameCanvas } from "./game/GameCanvas";
-import { FRUIT_META, type FruitKind, type RoundResult, type RoundSnapshot } from "./game/model";
+import { FRUIT_META, type CustomerOrderSnapshot, type FruitKind, type RoundResult, type RoundSnapshot } from "./game/model";
 import {
   makeDemoFrame,
   startVisionTracking,
@@ -11,6 +11,7 @@ import {
 
 type Screen = "welcome" | "permission" | "tutorial" | "countdown" | "playing" | "results";
 type PlayMode = "camera" | "demo";
+type HandTrackingStatus = "waiting" | "both" | "one" | "missing";
 
 const initialSnapshot: RoundSnapshot = {
   score: 0,
@@ -19,29 +20,104 @@ const initialSnapshot: RoundSnapshot = {
   correct: 0,
   misses: 0,
   timeLeft: 60,
-  target: "orange",
+  orders: [],
+  ordersCompleted: 0,
+  orderStreak: 0,
   frenzyLeft: 0,
   freezeLeft: 0,
 };
+
+const CUSTOMER_UI: Record<string, { portrait: string; quote: string }> = {
+  Maya: { portrait: "portraits/maya.webp", quote: "Make it bright!" },
+  Theo: { portrait: "portraits/theo.webp", quote: "No rush. Mostly." },
+  Jo: { portrait: "portraits/jo.webp", quote: "Extra cold!" },
+  Nico: { portrait: "portraits/nico.webp", quote: "Hit me!" },
+  Zara: { portrait: "portraits/zara.webp", quote: "Surprise me." },
+  Remy: { portrait: "portraits/remy.webp", quote: "Fresh is best." },
+};
+
+const customerPortraits = Object.entries(CUSTOMER_UI);
 
 function FruitDot({ kind, large = false }: { kind: FruitKind; large?: boolean }) {
   return (
     <span
       className={`fruit-dot fruit-dot--${kind}${large ? " fruit-dot--large" : ""}`}
-      style={{ "--fruit": FRUIT_META[kind].color, "--fruit-dark": FRUIT_META[kind].dark } as React.CSSProperties}
+      style={{ "--fruit": FRUIT_META[kind].color } as React.CSSProperties}
       aria-hidden="true"
     >
-      <i />
+      <img src={`${import.meta.env.BASE_URL}fruits/${kind}.webp`} alt="" />
     </span>
+  );
+}
+
+function drinkAssetPath(drink: string) {
+  const slug = drink.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  return `${import.meta.env.BASE_URL}drinks/${slug}.webp`;
+}
+
+function CustomerOrderCard({ order, index }: { order: CustomerOrderSnapshot; index: number }) {
+  const filledCount = order.filled.filter(Boolean).length;
+  const progress = filledCount / order.ingredients.length;
+  const customer = CUSTOMER_UI[order.customer] ?? CUSTOMER_UI.Maya;
+  return (
+    <article
+      className={`order-card${order.completed ? " order-card--complete" : ""}`}
+      style={{ "--order-accent": order.accent, "--order-progress": `${progress * 100}%` } as React.CSSProperties}
+      aria-label={`${order.customer}'s ${order.drink}: ${filledCount} of ${order.ingredients.length} fruits added${order.completed ? ", complete" : ""}`}
+    >
+      <div className="order-card__topline">
+        <span className="customer-avatar" aria-hidden="true"><img src={customer.portrait} alt="" /></span>
+        <span className="order-card__customer">
+          <small>COUNTER {String(index + 1).padStart(2, "0")}</small>
+          <strong>{order.customer}</strong>
+          <em>{order.completed ? "Perfect!" : customer.quote}</em>
+        </span>
+        <span className="order-card__ticket">#{String(order.id).padStart(2, "0")}</span>
+      </div>
+      <div className="order-card__recipe">
+        <div className="order-card__recipe-copy">
+          <div className="order-card__drink">{order.drink}</div>
+          <div className={`order-card__ingredients${order.ingredients.length >= 4 ? " order-card__ingredients--dense" : ""}`} aria-hidden="true">
+            {order.ingredients.map((kind, ingredientIndex) => (
+              <span className={order.filled[ingredientIndex] ? "is-filled" : ""} key={`${kind}-${ingredientIndex}`}>
+                <FruitDot kind={kind} />
+                <i>{order.filled[ingredientIndex] ? "✓" : "+"}</i>
+              </span>
+            ))}
+          </div>
+        </div>
+        <img className="order-card__drink-art" src={drinkAssetPath(order.drink)} alt="" aria-hidden="true" />
+      </div>
+      <div className="order-card__progress"><i /></div>
+      {order.completed && <div className="order-card__stamp" aria-hidden="true">ORDER UP!</div>}
+    </article>
   );
 }
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
-    <div className={`brand${compact ? " brand--compact" : ""}`} aria-label="Juicers">
-      <span className="brand__drop" aria-hidden="true" />
-      <span className="brand__word">JUICERS</span>
+    <div className={`brand${compact ? " brand--compact" : ""}`} role="img" aria-label="Juicers">
+      <span className="brand__sign" aria-hidden="true">
+        <span className="brand__drop"><i /></span>
+        <span className="brand__word">
+          {"JUICERS".split("").map((letter, index) => <i key={`${letter}-${index}`}>{letter}</i>)}
+        </span>
+        <span className="brand__shine" />
+      </span>
       {!compact && <span className="brand__tag">MATCH · SQUEEZE · SPLASH</span>}
+    </div>
+  );
+}
+
+function DinerBackdrop() {
+  return (
+    <div className="diner-set" aria-hidden="true">
+      <span className="diner-lamp diner-lamp--left"><i /></span>
+      <span className="diner-lamp diner-lamp--right"><i /></span>
+      <span className="diner-menu diner-menu--left"><i /><i /><i /><i /></span>
+      <span className="diner-menu diner-menu--right"><i /><i /><i /><i /></span>
+      <span className="diner-shelf"><i /><i /><i /><i /><i /></span>
+      <span className="diner-counter"><i /><i /><i /></span>
     </div>
   );
 }
@@ -50,7 +126,7 @@ function PrivacyNote() {
   return (
     <div className="privacy-note">
       <span className="privacy-note__icon" aria-hidden="true">◆</span>
-      <span><strong>On-device only.</strong> Your camera never leaves this browser. Nothing is recorded or uploaded.</span>
+      <span><strong>On-device only.</strong> Video is never shown, recorded, stored, or uploaded.</span>
     </div>
   );
 }
@@ -68,18 +144,28 @@ export function App() {
   const [roundNumber, setRoundNumber] = useState(1);
   const [muted, setMuted] = useState(false);
   const [announcement, setAnnouncement] = useState("");
-  const [, setTrackingPulse] = useState(0);
+  const [trackedHandMask, setTrackedHandMask] = useState(0);
+  const [handTrackingStatus, setHandTrackingStatus] = useState<HandTrackingStatus>("waiting");
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackingRef = useRef<TrackingFrame>(makeDemoFrame());
   const trackingCleanupRef = useRef<null | (() => void)>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const handsMissingSinceRef = useRef<number | null>(null);
+  const setupReadyTimerRef = useRef<number | null>(null);
 
   const stopCamera = useCallback(() => {
+    if (setupReadyTimerRef.current !== null) {
+      window.clearTimeout(setupReadyTimerRef.current);
+      setupReadyTimerRef.current = null;
+    }
     trackingCleanupRef.current?.();
     trackingCleanupRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
+    handsMissingSinceRef.current = null;
+    setTrackedHandMask(0);
+    setHandTrackingStatus("waiting");
     setCameraActive(false);
     setVisionStatus("idle");
   }, []);
@@ -87,8 +173,28 @@ export function App() {
   useEffect(() => stopCamera, [stopCamera]);
 
   useEffect(() => {
-    if (!cameraActive || (screen !== "tutorial" && screen !== "playing")) return;
-    const interval = window.setInterval(() => setTrackingPulse((value) => value + 1), 180);
+    if (!cameraActive || (screen !== "tutorial" && screen !== "playing")) {
+      handsMissingSinceRef.current = null;
+      return;
+    }
+    const updateTrackingStatus = () => {
+      const hands = trackingRef.current.hands;
+      const left = hands.some((hand) => hand.id === "left");
+      const right = hands.some((hand) => hand.id === "right");
+      const mask = (left ? 1 : 0) | (right ? 2 : 0);
+      setTrackedHandMask(mask);
+
+      if (mask === 0) {
+        const now = performance.now();
+        handsMissingSinceRef.current ??= now;
+        setHandTrackingStatus(now - handsMissingSinceRef.current >= 700 ? "missing" : "waiting");
+      } else {
+        handsMissingSinceRef.current = null;
+        setHandTrackingStatus(mask === 3 ? "both" : "one");
+      }
+    };
+    updateTrackingStatus();
+    const interval = window.setInterval(updateTrackingStatus, 180);
     return () => window.clearInterval(interval);
   }, [cameraActive, screen]);
 
@@ -103,6 +209,10 @@ export function App() {
 
   const requestCamera = useCallback(async () => {
     await juiceAudio.unlock();
+    if (setupReadyTimerRef.current !== null) {
+      window.clearTimeout(setupReadyTimerRef.current);
+      setupReadyTimerRef.current = null;
+    }
     setMode("camera");
     setScreen("permission");
     setCameraMessage("");
@@ -131,12 +241,21 @@ export function App() {
       if (!video) throw new Error("The camera preview could not start.");
       video.srcObject = stream;
       await video.play();
+      trackingRef.current = { source: "camera", hands: [], updatedAt: performance.now() };
       setCameraActive(true);
 
       trackingCleanupRef.current = await startVisionTracking(videoRef, trackingRef, (status, message) => {
         setVisionStatus(status);
         if (message) setCameraMessage(message);
-        if (status === "ready") setScreen("tutorial");
+        if (status === "ready" && setupReadyTimerRef.current === null) {
+          setupReadyTimerRef.current = window.setTimeout(() => {
+            setupReadyTimerRef.current = null;
+            setScreen("tutorial");
+          }, 650);
+        } else if (status === "error" && setupReadyTimerRef.current !== null) {
+          window.clearTimeout(setupReadyTimerRef.current);
+          setupReadyTimerRef.current = null;
+        }
       });
     } catch (error) {
       streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -211,13 +330,14 @@ export function App() {
     });
   }, []);
 
-  const trackedLeft = trackingRef.current.hands.find((hand) => hand.id === "left");
-  const trackedRight = trackingRef.current.hands.find((hand) => hand.id === "right");
+  const trackedLeft = Boolean(trackedHandMask & 1);
+  const trackedRight = Boolean(trackedHandMask & 2);
   const accuracy = result && result.correct + result.misses > 0
     ? Math.round((result.correct / (result.correct + result.misses)) * 100)
     : 0;
   const canvasPhase = screen === "tutorial" ? "tutorial" : screen === "countdown" ? "countdown" : screen === "playing" ? "playing" : "results";
   const timerWarning = snapshot.timeLeft <= 10;
+  const setupStage = visionStatus === "ready" ? "ready" : cameraActive ? "tracking" : "camera";
 
   return (
     <main className={`app app--${screen}`}>
@@ -229,7 +349,6 @@ export function App() {
           playToken={playToken}
           roundNumber={roundNumber}
           countdown={countdown}
-          videoRef={videoRef}
           trackingRef={trackingRef}
           cameraActive={cameraActive}
           onSnapshot={setSnapshot}
@@ -240,20 +359,28 @@ export function App() {
 
       {screen === "welcome" && (
         <section className="welcome-shell" aria-labelledby="welcome-title">
+          <DinerBackdrop />
+          <div className="diner-awning" aria-hidden="true" />
+          <div className="diner-checker diner-checker--welcome" aria-hidden="true" />
+          <div className="welcome-cast" aria-hidden="true">
+            {customerPortraits.map(([name, customer], index) => (
+              <img src={customer.portrait} alt="" className={`welcome-cast__portrait welcome-cast__portrait--${index + 1}`} key={name} />
+            ))}
+          </div>
           <div className="ambient ambient--one" />
           <div className="ambient ambient--two" />
           <div className="welcome-fruit welcome-fruit--orange"><FruitDot kind="orange" large /></div>
           <div className="welcome-fruit welcome-fruit--berry"><FruitDot kind="berry" large /></div>
           <div className="welcome-fruit welcome-fruit--lime"><FruitDot kind="lime" large /></div>
           <div className="welcome-card">
-            <div className="welcome-card__topline"><span>60 SECOND MOTION ARCADE</span><span>v1.0</span></div>
+            <div className="welcome-card__topline"><span>THE NEIGHBORHOOD JUICE COUNTER</span><span>OPEN LATE</span></div>
             <Brand />
-            <h1 id="welcome-title">Your head picks the flavor.<br /><em>Your hands make the splash.</em></h1>
-            <p className="welcome-card__lede">Match the fruit above your head, catch it with either hand, then close your fist to juice it. Build the combo. Own the pour.</p>
+            <h1 id="welcome-title">The orders keep coming.<br /><em>Your hands make the splash.</em></h1>
+            <p className="welcome-card__lede">Catch the fruit your customers need, squeeze it into their tickets, and serve as many colorful drinks as you can before time runs out.</p>
             <div className="choice-grid">
               <button className="choice-card choice-card--primary" onClick={() => void requestCamera()}>
                 <span className="choice-card__icon camera-icon" aria-hidden="true"><i /></span>
-                <span className="choice-card__copy"><strong>Play with camera</strong><small>Head + two-hand tracking</small></span>
+                <span className="choice-card__copy"><strong>Play with camera</strong><small>Two-hand tracking</small></span>
                 <span className="choice-card__arrow" aria-hidden="true">→</span>
               </button>
               <button className="choice-card" onClick={() => void enterDemo()}>
@@ -270,17 +397,50 @@ export function App() {
 
       {screen === "permission" && (
         <section className="permission-shell" aria-labelledby="permission-title">
+          <DinerBackdrop />
+          <div className="diner-awning" aria-hidden="true" />
+          <div className="diner-checker diner-checker--welcome" aria-hidden="true" />
           <div className="permission-card">
             <Brand compact />
-            {visionStatus === "loading" ? (
+            {visionStatus === "loading" || visionStatus === "ready" ? (
               <>
-                <div className="loader-orbit" aria-hidden="true"><span /><span /><span /></div>
-                <p className="eyebrow">SETTING UP YOUR JUICE BAR</p>
-                <h1 id="permission-title">Look for your browser’s<br />camera prompt.</h1>
-                <p>Once approved, we’ll load the face and hand models on this device. First setup can take a moment.</p>
-                <div className="setup-steps" aria-label="Setup progress">
-                  <span className="is-done">Camera requested</span><span className={cameraActive ? "is-done" : ""}>Video acquired</span><span>Motion tracking</span>
+                <div className={`setup-ritual setup-ritual--${setupStage}`} aria-hidden="true">
+                  <div className="setup-ticket">
+                    <span>ORDER 01</span>
+                    <span className="setup-ticket__camera"><i /></span>
+                    <strong>CAMERA</strong>
+                    <small>REQUESTED</small>
+                  </div>
+                  <span className="setup-ritual__arrow">➜</span>
+                  <div className="setup-blender">
+                    <span className="setup-blender__cap" />
+                    <span className="setup-blender__jar"><i /><b /><b /></span>
+                    <span className="setup-blender__base" />
+                  </div>
+                  <div className="setup-ready-burst"><span>COUNTER</span><strong>READY!</strong></div>
                 </div>
+                <p className="eyebrow">SETTING UP YOUR JUICE BAR</p>
+                <h1 id="permission-title">
+                  {setupStage === "camera" && <>Say yes at the camera prompt.</>}
+                  {setupStage === "tracking" && <>Warming up the hand tracker.</>}
+                  {setupStage === "ready" && <>Counter ready. Aprons on.</>}
+                </h1>
+                <p>
+                  {setupStage === "camera" && "We only use the camera to find your hands. The video stays hidden and never leaves this device."}
+                  {setupStage === "tracking" && "The hand model is loading on this device. Your hidden video is never recorded, stored, or uploaded."}
+                  {setupStage === "ready" && "Tracking is ready. You’ll only see the cartoon hands the game detects — never your camera video."}
+                </p>
+                <ol className="setup-steps" aria-label="Camera setup progress" aria-live="polite" aria-atomic="true">
+                  <li className={`is-done${setupStage === "camera" ? " is-active" : ""}`} aria-current={setupStage === "camera" ? "step" : undefined}>
+                    <span>01</span><div><strong>Camera requested</strong><small>Approve the browser prompt</small></div>
+                  </li>
+                  <li className={`${setupStage !== "camera" ? "is-done" : ""}${setupStage === "tracking" ? " is-active" : ""}`} aria-current={setupStage === "tracking" ? "step" : undefined}>
+                    <span>02</span><div><strong>Hand model loading</strong><small>Runs only on this device</small></div>
+                  </li>
+                  <li className={`${setupStage === "ready" ? "is-done is-active" : ""}`} aria-current={setupStage === "ready" ? "step" : undefined}>
+                    <span>03</span><div><strong>Counter ready</strong><small>Cartoon hands, no video</small></div>
+                  </li>
+                </ol>
               </>
             ) : (
               <>
@@ -303,10 +463,9 @@ export function App() {
           <Brand compact />
           {screen === "playing" && (
             <>
-              <div className="target-chip" aria-label={`Target fruit: ${FRUIT_META[snapshot.target].label}`}>
-                <span className="target-chip__caption">HEAD TARGET</span>
-                <FruitDot kind={snapshot.target} />
-                <strong>{FRUIT_META[snapshot.target].label}</strong>
+              <div className="served-stack">
+                <span>SERVED</span><strong>{snapshot.ordersCompleted}</strong>
+                {snapshot.orderStreak > 1 && <small>{snapshot.orderStreak} order streak</small>}
               </div>
               <div className="score-stack"><span>SCORE</span><strong>{snapshot.score.toLocaleString()}</strong></div>
               <div className={`timer${timerWarning ? " timer--warning" : ""}`} style={{ "--time": `${snapshot.timeLeft / 60}turn` } as React.CSSProperties}>
@@ -327,18 +486,21 @@ export function App() {
               <span>ROUND {String(roundNumber).padStart(2, "0")}</span>
             </div>
             <p className="eyebrow">QUICK POUR SCHOOL</p>
-            <h1 id="tutorial-title">Three moves. One minute.</h1>
+            <div className="tutorial-host">
+              <img src={CUSTOMER_UI.Maya.portrait} alt="Maya, a Juicers customer" />
+              <div><span>MAYA SAYS</span><h1 id="tutorial-title">Three moves. One minute.</h1></div>
+            </div>
             <div className="tutorial-steps">
-              <article><span className="step-number">01</span><FruitDot kind="lime" /><div><strong>Match the target</strong><p>Juice only the fruit shown above your head.</p></div></article>
+              <article><span className="step-number">01</span><FruitDot kind="lime" /><div><strong>Read the tickets</strong><p>Squeeze any fruit a customer still needs. It fills the first matching order.</p></div></article>
               <article><span className="step-number">02</span><span className="hand-diagram" aria-hidden="true">✦</span><div><strong>Overlap + squeeze</strong><p>{mode === "camera" ? "Move either hand onto it, then close your fist." : "Move with mouse or keys, then click or press Space."}</p></div></article>
-              <article><span className="step-number">03</span><span className="combo-diagram" aria-hidden="true">8×</span><div><strong>Keep the pour going</strong><p>Matches grow your combo. Wrong fruit resets it.</p></div></article>
+              <article><span className="step-number">03</span><span className="combo-diagram" aria-hidden="true">8×</span><div><strong>Call “order up!”</strong><p>Finish recipes for big bonuses. New customers keep joining the queue.</p></div></article>
             </div>
             {mode === "camera" ? (
               <div className="tracking-check">
-                <span className={trackingRef.current.head ? "is-seen" : ""}><i /> Head</span>
+                <span className="is-private"><i /> Camera on</span>
                 <span className={trackedLeft ? "is-seen" : ""}><i /> Left hand</span>
                 <span className={trackedRight ? "is-seen" : ""}><i /> Right hand</span>
-                <small>Step back until your face and both hands fit in frame.</small>
+                <small>Video hidden · bring both hands into view.</small>
               </div>
             ) : (
               <div className="demo-controls">
@@ -353,11 +515,26 @@ export function App() {
 
       {screen === "playing" && (
         <>
-          <aside className="status-rail" aria-label="Tracking status">
-            <span className={trackingRef.current.head ? "is-live" : ""}><i /> HEAD</span>
-            <span className={trackedLeft ? "is-live" : ""}><i /> L HAND</span>
-            <span className={trackedRight ? "is-live" : ""}><i /> R HAND</span>
-          </aside>
+          <section className="order-rail" aria-label="Customer orders">
+            {snapshot.orders.map((order, index) => <CustomerOrderCard order={order} index={index} key={order.id} />)}
+          </section>
+          {mode === "camera" && (
+            <aside className="status-rail" aria-label="Tracking status">
+              <span className="is-private"><i /> CAMERA ON · VIDEO HIDDEN</span>
+              <span className={trackedLeft ? "is-live" : ""}><i /> L HAND</span>
+              <span className={trackedRight ? "is-live" : ""}><i /> R HAND</span>
+            </aside>
+          )}
+          {mode === "camera" && handTrackingStatus === "missing" && (
+            <div className="tracking-nudge" role="status" aria-live="polite">
+              <span className="tracking-nudge__burst" aria-hidden="true">✦</span>
+              <span className="tracking-nudge__copy">
+                <small>TRACKING CHECK</small>
+                <strong>HANDS NOT DETECTED</strong>
+                <span>Lift both hands into view — pouring resumes automatically.</span>
+              </span>
+            </div>
+          )}
           {(snapshot.frenzyLeft > 0 || snapshot.freezeLeft > 0) && (
             <div className="power-status">
               {snapshot.frenzyLeft > 0 && <span className="power-status__frenzy">JUICE RUSH · {Math.ceil(snapshot.frenzyLeft)}s</span>}
@@ -377,9 +554,17 @@ export function App() {
             <h1 id="results-title">{result.rank}</h1>
             <div className="final-score"><span>FINAL POUR</span><strong>{result.score.toLocaleString()}</strong><small>POINTS</small></div>
             <div className="result-stats">
-              <div><span>MATCHES</span><strong>{result.correct}</strong></div>
+              <div><span>ORDERS SERVED</span><strong>{result.ordersCompleted}</strong></div>
               <div><span>BEST COMBO</span><strong>{result.bestCombo}<i>×</i></strong></div>
               <div><span>ACCURACY</span><strong>{accuracy}<i>%</i></strong></div>
+            </div>
+            <div className="happy-customers" aria-label={`${result.ordersCompleted} happy ${result.ordersCompleted === 1 ? "customer" : "customers"} served`}>
+              <span>HAPPY REGULARS</span>
+              <div>
+                {customerPortraits.slice(0, Math.max(1, Math.min(customerPortraits.length, result.ordersCompleted))).map(([name, customer]) => (
+                  <img src={customer.portrait} alt={name} title={name} key={name} />
+                ))}
+              </div>
             </div>
             <div className="result-actions">
               <button className="button button--primary" onClick={replay}>Pour another round <span>↻</span></button>

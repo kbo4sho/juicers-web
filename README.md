@@ -1,6 +1,8 @@
 # Juicers
 
-Juicers is a polished, one-minute browser arcade game. A fruit target floats above the player’s head; they move either hand over a falling fruit and close their fist to juice it. Correct fruit grows the combo and changes the target. Wrong fruit costs points and breaks the combo.
+Juicers is a polished, one-minute browser arcade game. Customer tickets arrive with colorful multi-fruit recipes; players move either hand over falling fruit and close their fist to squeeze it into the first matching order. Finished drinks earn big bonuses, leave the rail with an “ORDER UP!” celebration, and make room for the next customer.
+
+The game is staged as a neighborhood diner–juice bar, with a six-person cast of original cartoon regulars. Their portraits, names, and short lines carry from the welcome screen through live order tickets and the results screen. The face-free fruit and finished-drink illustrations share the cast's inked cel-animation treatment. Optimized WebP assets live in `public/portraits/`, `public/fruits/`, and `public/drinks/`.
 
 **Play:** https://kbo4sho.github.io/juicers-web/
 
@@ -13,13 +15,14 @@ Use current desktop Chrome or Edge over `https://` (or `localhost`).
 ### Camera mode
 
 1. Choose **Play with camera** and approve browser camera access.
-2. Step back until your face and both hands fit in frame.
-3. A strawberry mask replaces your head and scales with your detected face; match the fruit badge floating above it.
-4. Overlap a falling fruit with either cartoon glove, then close and reopen your fist. The glove changes from an open palm to a popping fist.
+2. Step back until both hands fit comfortably in frame.
+3. The webcam feed stays hidden; the two cartoon gloves show exactly what the game detects.
+4. Watch the customer tickets for the fruit the juice bar needs.
+5. Overlap a falling fruit with either cartoon glove, then close and reopen your fist. The glove changes from an open palm to a popping fist.
 
 ### Demo mode
 
-Demo mode is the complete game without camera access. It uses the same deterministic fruit sequence, scoring, difficulty ramp, powerups, results, and replay loop.
+Demo mode is the complete game without camera access. It uses the same deterministic fruit sequence, customer queue, scoring, difficulty ramp, powerups, results, and replay loop.
 
 - Mouse: move the right hand; click to squeeze.
 - Arrow keys: move the right hand; `M` or `Space` to squeeze.
@@ -29,7 +32,8 @@ The squeeze is edge-triggered: reopen before squeezing again. The playfield is k
 
 ## Privacy
 
-- Camera frames go directly from `getUserMedia()` to MediaPipe’s in-browser face and hand landmark models.
+- Camera frames go directly from `getUserMedia()` to MediaPipe’s in-browser hand landmark model.
+- The live webcam image is never drawn into the game; only the resulting cartoon-hand positions are shown.
 - The model and WebAssembly files live in `public/`; landmark inference is local to the device and capped at 24 Hz.
 - The app never uses `MediaRecorder`, never sends frames over the network, and stores no video, images, scores, or identifiers.
 - Demo mode does not request camera permission.
@@ -62,11 +66,14 @@ Other scripts:
 
 ## Architecture
 
-- `src/App.tsx` owns onboarding, camera permission and denial recovery, tutorial, countdown, HUD, results, and replay.
-- `src/game/GameCanvas.tsx` owns the display-refresh render loop, deterministic round state, collision, scoring, difficulty ramp, fruit art, splatters, particles, and powerups.
-- `src/game/tracking.ts` initializes local MediaPipe face and two-hand tracking, smooths the face position and scale used by the strawberry mask, and applies fist-close hysteresis.
+- `src/App.tsx` owns onboarding, camera permission and denial recovery, tutorial, customer ticket rail, HUD, results, and replay.
+- `src/game/GameCanvas.tsx` owns the display-refresh render loop, deterministic customer queue and recipes, squeeze-to-order routing, scoring, difficulty ramp, fruit-sprite presentation, completion celebrations, particles, and powerups.
+- `src/game/tracking.ts` initializes local MediaPipe two-hand tracking, smooths hand positions, and applies fist-close hysteresis.
 - `src/game/audio.ts` synthesizes distinct Web Audio cues without loading audio files.
 - `src/game/model.ts` contains the scoring and deterministic random contracts.
+- `public/portraits/` contains the optimized original customer portraits used by the interface.
+- `public/fruits/` contains the optimized transparent fruit illustrations used by the interface and playfield.
+- `public/drinks/` contains the ten optimized transparent finished-drink illustrations used by customer order cards.
 
 The render loop and inference loop are separate. Landmark work is throttled, resize/input listeners are cleaned up, scored fruit is removed immediately, and expired effects are pruned every frame.
 
