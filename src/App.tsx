@@ -2,7 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { juiceAudio } from "./game/audio";
 import type { AudioScene } from "./game/audioScore";
 import { GameCanvas } from "./game/GameCanvas";
-import { FRUIT_META, type CustomerOrderSnapshot, type FruitKind, type RoundResult, type RoundSnapshot } from "./game/model";
+import {
+  FRUIT_META,
+  rankForScore,
+  type CustomerOrderSnapshot,
+  type FruitKind,
+  type RoundMode,
+  type RoundResult,
+  type RoundSnapshot,
+} from "./game/model";
 import {
   makeDemoFrame,
   startVisionTracking,
@@ -31,10 +39,10 @@ const initialSnapshot: RoundSnapshot = {
 const CUSTOMER_UI: Record<string, { portrait: string; quote: string }> = {
   Maya: { portrait: "portraits/maya.webp", quote: "Make it bright!" },
   Theo: { portrait: "portraits/theo.webp", quote: "No rush. Mostly." },
-  Jo: { portrait: "portraits/jo.webp", quote: "Extra cold!" },
-  Nico: { portrait: "portraits/nico.webp", quote: "Hit me!" },
+  Pip: { portrait: "portraits/pip.webp", quote: "Make it sing!" },
+  Mina: { portrait: "portraits/mina.webp", quote: "Tart and bright!" },
   Zara: { portrait: "portraits/zara.webp", quote: "Surprise me." },
-  Remy: { portrait: "portraits/remy.webp", quote: "Fresh is best." },
+  Dax: { portrait: "portraits/dax.webp", quote: "Go big!" },
 };
 
 const customerPortraits = Object.entries(CUSTOMER_UI);
@@ -135,6 +143,7 @@ function PrivacyNote() {
 export function App() {
   const [screen, setScreen] = useState<Screen>("welcome");
   const [mode, setMode] = useState<PlayMode>("demo");
+  const [roundMode, setRoundMode] = useState<RoundMode>("timed");
   const [cameraActive, setCameraActive] = useState(false);
   const [visionStatus, setVisionStatus] = useState<VisionStatus>("idle");
   const [cameraMessage, setCameraMessage] = useState("");
@@ -319,10 +328,14 @@ export function App() {
     }
   }, []);
 
-  const startRound = useCallback(() => {
+  const startRound = useCallback((nextRoundMode: RoundMode) => {
     void juiceAudio.unlock();
+    setRoundMode(nextRoundMode);
     setResult(null);
-    setSnapshot(initialSnapshot);
+    setSnapshot({
+      ...initialSnapshot,
+      timeLeft: nextRoundMode === "timed" ? 60 : null,
+    });
     setAnnouncement("");
     setCountdown(3);
     setScreen("countdown");
@@ -355,13 +368,27 @@ export function App() {
   const handleFinish = useCallback((finished: RoundResult) => {
     setResult(finished);
     setScreen("results");
-    setAnnouncement(`Round complete. ${finished.rank}. Score ${finished.score}. Best combo ${finished.bestCombo}.`);
-  }, []);
+    setAnnouncement(`${roundMode === "endless" ? "Free play session" : "Round"} complete. ${finished.rank}. Score ${finished.score}. Best combo ${finished.bestCombo}.`);
+  }, [roundMode]);
+
+  const finishEndless = useCallback(() => {
+    if (roundMode !== "endless" || screen !== "playing") return;
+    juiceAudio.play("finish");
+    handleFinish({
+      score: snapshot.score,
+      combo: snapshot.combo,
+      bestCombo: snapshot.bestCombo,
+      correct: snapshot.correct,
+      misses: snapshot.misses,
+      ordersCompleted: snapshot.ordersCompleted,
+      rank: rankForScore(snapshot.score),
+    });
+  }, [handleFinish, roundMode, screen, snapshot]);
 
   const replay = useCallback(() => {
     setRoundNumber((round) => round + 1);
-    startRound();
-  }, [startRound]);
+    startRound(roundMode);
+  }, [roundMode, startRound]);
 
   const switchMode = useCallback(() => {
     if (mode === "camera") void enterDemo();
@@ -384,7 +411,7 @@ export function App() {
     ? Math.round((result.correct / (result.correct + result.misses)) * 100)
     : 0;
   const canvasPhase = screen === "tutorial" ? "tutorial" : screen === "countdown" ? "countdown" : screen === "playing" ? "playing" : "results";
-  const timerWarning = snapshot.timeLeft <= 10;
+  const timerWarning = roundMode === "timed" && snapshot.timeLeft !== null && snapshot.timeLeft <= 10;
   const setupStage = visionStatus === "ready" ? "ready" : cameraActive ? "tracking" : "camera";
 
   useEffect(() => {
@@ -401,7 +428,7 @@ export function App() {
   }, [screen, timerWarning]);
 
   return (
-    <main className={`app app--${screen}`}>
+    <main className={`app app--${screen} app--round-${roundMode}`}>
       <video ref={videoRef} className="camera-feed" muted autoPlay playsInline aria-hidden="true" />
 
       {screen !== "welcome" && screen !== "permission" && (
@@ -409,6 +436,7 @@ export function App() {
           phase={canvasPhase}
           playToken={playToken}
           roundNumber={roundNumber}
+          roundMode={roundMode}
           countdown={countdown}
           trackingRef={trackingRef}
           cameraActive={cameraActive}
@@ -437,7 +465,7 @@ export function App() {
             <div className="welcome-card__topline"><span>THE NEIGHBORHOOD JUICE COUNTER</span><span>OPEN LATE</span></div>
             <Brand />
             <h1 id="welcome-title">The orders keep coming.<br /><em>Your hands make the splash.</em></h1>
-            <p className="welcome-card__lede">Catch the fruit your customers need, squeeze it into their tickets, and serve as many colorful drinks as you can before time runs out.</p>
+            <p className="welcome-card__lede">Catch the fruit your customers need, squeeze it into their tickets, and serve colorful drinks in a one-minute rush or for as long as you like.</p>
             <div className="choice-grid">
               <button className="choice-card choice-card--primary" onClick={() => void requestCamera()}>
                 <span className="choice-card__icon camera-icon" aria-hidden="true"><i /></span>
@@ -529,13 +557,24 @@ export function App() {
                 {snapshot.orderStreak > 1 && <small>{snapshot.orderStreak} order streak</small>}
               </div>
               <div className="score-stack"><span>SCORE</span><strong>{snapshot.score.toLocaleString()}</strong></div>
-              <div className={`timer${timerWarning ? " timer--warning" : ""}`} style={{ "--time": `${snapshot.timeLeft / 60}turn` } as React.CSSProperties}>
-                <div><strong>{Math.ceil(snapshot.timeLeft)}</strong><span>SEC</span></div>
-              </div>
+              {roundMode === "timed" && snapshot.timeLeft !== null ? (
+                <div className={`timer${timerWarning ? " timer--warning" : ""}`} style={{ "--time": `${snapshot.timeLeft / 60}turn` } as React.CSSProperties}>
+                  <div><strong>{Math.ceil(snapshot.timeLeft)}</strong><span>SEC</span></div>
+                </div>
+              ) : (
+                <div className="endless-badge" aria-label="Endless free play, no timer">
+                  <strong>∞</strong><span>FREE PLAY</span>
+                </div>
+              )}
               <div className={`combo-stack${snapshot.combo >= 4 ? " combo-stack--hot" : ""}`}><span>COMBO</span><strong>{snapshot.combo}<i>×</i></strong></div>
             </>
           )}
-          <button className="icon-button" onClick={toggleMute} aria-label={muted ? "Turn sound on" : "Mute sound"}>{muted ? "SOUND OFF" : "SOUND ON"}</button>
+          <div className="header-actions">
+            {screen === "playing" && roundMode === "endless" && (
+              <button className="icon-button icon-button--endless" onClick={finishEndless}>END SESSION</button>
+            )}
+            <button className="icon-button" onClick={toggleMute} aria-label={muted ? "Turn sound on" : "Mute sound"}>{muted ? "SOUND OFF" : "SOUND ON"}</button>
+          </div>
         </header>
       )}
 
@@ -544,12 +583,12 @@ export function App() {
           <div className="tutorial-card">
             <div className="tutorial-card__head">
               <span className={`mode-badge mode-badge--${mode}`}>{mode === "camera" ? "● CAMERA MODE" : "◆ DEMO MODE"}</span>
-              <span>ROUND {String(roundNumber).padStart(2, "0")}</span>
+              <span>{roundMode === "endless" ? "SESSION" : "ROUND"} {String(roundNumber).padStart(2, "0")}</span>
             </div>
             <p className="eyebrow">QUICK POUR SCHOOL</p>
             <div className="tutorial-host">
               <img src={CUSTOMER_UI.Maya.portrait} alt="Maya, a Juicers customer" />
-              <div><span>MAYA SAYS</span><h1 id="tutorial-title">Three moves. One minute.</h1></div>
+              <div><span>MAYA SAYS</span><h1 id="tutorial-title">Three moves. Two ways to pour.</h1></div>
             </div>
             <div className="tutorial-steps">
               <article><span className="step-number">01</span><FruitDot kind="lime" /><div><strong>Read the tickets</strong><p>Squeeze any fruit a customer still needs. It fills the first matching order.</p></div></article>
@@ -568,7 +607,21 @@ export function App() {
                 <span><kbd>MOUSE</kbd> Move right hand</span><span><kbd>CLICK</kbd> Squeeze</span><span><kbd>WASD + Z</kbd> Left hand</span><span><kbd>ARROWS + M</kbd> Right hand</span>
               </div>
             )}
-            <button className="button button--primary button--wide" onClick={startRound}>Start 60-second round <span>→</span></button>
+            <div className="round-choice" aria-label="Choose a game mode">
+              <span className="round-choice__label">CHOOSE YOUR SHIFT</span>
+              <div className="round-choice__grid">
+                <button className="round-choice__card round-choice__card--timed" onClick={() => startRound("timed")}>
+                  <span className="round-choice__icon" aria-hidden="true">60</span>
+                  <span><strong>60-SECOND RUSH</strong><small>Beat the clock · ranked finish</small></span>
+                  <i aria-hidden="true">→</i>
+                </button>
+                <button className="round-choice__card round-choice__card--endless" onClick={() => startRound("endless")}>
+                  <span className="round-choice__icon" aria-hidden="true">∞</span>
+                  <span><strong>ENDLESS COUNTER</strong><small>No timer · play your way</small></span>
+                  <i aria-hidden="true">→</i>
+                </button>
+              </div>
+            </div>
             <button className="text-button" onClick={switchMode}>{mode === "camera" ? "Use demo controls instead" : "Back to mode select"}</button>
           </div>
         </section>
@@ -611,7 +664,7 @@ export function App() {
           <div className="result-splash result-splash--one" />
           <div className="result-splash result-splash--two" />
           <div className="results-card">
-            <p className="eyebrow">ROUND {String(roundNumber).padStart(2, "0")} COMPLETE</p>
+            <p className="eyebrow">{roundMode === "endless" ? "FREE PLAY COMPLETE" : `ROUND ${String(roundNumber).padStart(2, "0")} COMPLETE`}</p>
             <h1 id="results-title">{result.rank}</h1>
             <div className="final-score"><span>FINAL POUR</span><strong>{result.score.toLocaleString()}</strong><small>POINTS</small></div>
             <div className="result-stats">
@@ -628,7 +681,7 @@ export function App() {
               </div>
             </div>
             <div className="result-actions">
-              <button className="button button--primary" onClick={replay}>Pour another round <span>↻</span></button>
+              <button className="button button--primary" onClick={replay}>{roundMode === "endless" ? "Keep free playing" : "Pour another round"} <span>↻</span></button>
               <button className="button button--quiet" onClick={() => setScreen("tutorial")}>How to play</button>
             </div>
             <button className="text-button" onClick={switchMode}>{mode === "camera" ? "Switch to demo controls" : "Choose camera mode"}</button>

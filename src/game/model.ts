@@ -1,6 +1,7 @@
 export const FRUITS = ["orange", "lime", "berry", "melon", "pineapple"] as const;
 export type FruitKind = (typeof FRUITS)[number];
 export type PowerKind = "freeze" | "frenzy";
+export type RoundMode = "timed" | "endless";
 
 export type CustomerOrderSnapshot = {
   id: number;
@@ -29,7 +30,7 @@ export type RoundSnapshot = {
   bestCombo: number;
   correct: number;
   misses: number;
-  timeLeft: number;
+  timeLeft: number | null;
   orders: CustomerOrderSnapshot[];
   ordersCompleted: number;
   orderStreak: number;
