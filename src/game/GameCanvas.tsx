@@ -9,6 +9,7 @@ import {
   type CustomerOrderSnapshot,
   type FruitKind,
   type PowerKind,
+  type RoundMode,
   type RoundResult,
   type RoundSnapshot,
 } from "./model";
@@ -20,6 +21,7 @@ type Props = {
   phase: Phase;
   playToken: number;
   roundNumber: number;
+  roundMode: RoundMode;
   countdown: number;
   trackingRef: React.RefObject<TrackingFrame>;
   cameraActive: boolean;
@@ -122,10 +124,10 @@ if (typeof Image !== "undefined") {
 const CUSTOMERS = [
   { name: "Maya", accent: "#ff789f" },
   { name: "Theo", accent: "#65dfca" },
-  { name: "Jo", accent: "#ffbf4d" },
-  { name: "Nico", accent: "#a38bff" },
+  { name: "Pip", accent: "#ff8a4c" },
+  { name: "Mina", accent: "#f0a23d" },
   { name: "Zara", accent: "#7ad5ff" },
-  { name: "Remy", accent: "#b7ef63" },
+  { name: "Dax", accent: "#9b6cff" },
 ] as const;
 
 const DRINKS: { name: string; ingredients: FruitKind[] }[] = [
@@ -950,14 +952,16 @@ function addSplatter(engine: Engine, x: number, y: number, color: string, radius
   engine.splatters.push({ x, y, color, life: 0.64, maxLife: 0.64, radius, points });
 }
 
-function snapshot(engine: Engine, now: number): RoundSnapshot {
+function snapshot(engine: Engine, now: number, roundMode: RoundMode): RoundSnapshot {
   return {
     score: engine.score,
     combo: engine.combo,
     bestCombo: engine.bestCombo,
     correct: engine.correct,
     misses: engine.misses,
-    timeLeft: Math.max(0, ROUND_SECONDS - (now - engine.startedAt) / 1000),
+    timeLeft: roundMode === "timed"
+      ? Math.max(0, ROUND_SECONDS - (now - engine.startedAt) / 1000)
+      : null,
     orders: engine.orders.map(({ completedUntil: _completedUntil, ...order }) => ({
       ...order,
       ingredients: [...order.ingredients],
@@ -974,6 +978,7 @@ export function GameCanvas({
   phase,
   playToken,
   roundNumber,
+  roundMode,
   countdown,
   trackingRef,
   cameraActive,
@@ -984,12 +989,16 @@ export function GameCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine>(newEngine(0x4a554943));
   const phaseRef = useRef(phase);
+  const roundModeRef = useRef(roundMode);
   const callbackRef = useRef({ onSnapshot, onFinish, onAnnounce });
   const countdownRef = useRef(countdown);
 
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
+  useEffect(() => {
+    roundModeRef.current = roundMode;
+  }, [roundMode]);
   useEffect(() => {
     countdownRef.current = countdown;
   }, [countdown]);
@@ -1007,8 +1016,8 @@ export function GameCanvas({
     engine.nextSpawnAt = now + 360;
     refreshOrders(engine, now, 0);
     engineRef.current = engine;
-    onSnapshot(snapshot(engine, now));
-  }, [phase, playToken, roundNumber, onSnapshot]);
+    onSnapshot(snapshot(engine, now, roundMode));
+  }, [phase, playToken, roundMode, roundNumber, onSnapshot]);
 
   const updateDemoPoint = useCallback(
     (id: "left" | "right", x: number, y: number, closed?: boolean) => {
@@ -1258,7 +1267,7 @@ export function GameCanvas({
       const delta = Math.min(0.04, Math.max(0, (now - engine.lastFrame) / 1000));
       engine.lastFrame = now;
       const elapsed = (now - engine.startedAt) / 1000;
-      if (elapsed >= ROUND_SECONDS) {
+      if (roundModeRef.current === "timed" && elapsed >= ROUND_SECONDS) {
         engine.running = false;
         juiceAudio.play("finish");
         callbackRef.current.onFinish({
@@ -1318,7 +1327,7 @@ export function GameCanvas({
 
       if (now - engine.lastHudUpdate >= 90) {
         engine.lastHudUpdate = now;
-        callbackRef.current.onSnapshot(snapshot(engine, now));
+        callbackRef.current.onSnapshot(snapshot(engine, now, roundModeRef.current));
       }
     };
 
