@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { juiceAudio } from "./game/audio";
+import type { AudioScene } from "./game/audioScore";
 import { GameCanvas } from "./game/GameCanvas";
 import { FRUIT_META, type CustomerOrderSnapshot, type FruitKind, type RoundResult, type RoundSnapshot } from "./game/model";
 import {
@@ -173,6 +174,53 @@ export function App() {
   useEffect(() => stopCamera, [stopCamera]);
 
   useEffect(() => {
+    let diagnosticsTimer: number | null = null;
+    let lastDiagnosticsSignature = "";
+    const diagnosticsHistory: Array<Record<string, unknown>> = [];
+    const handleVisibility = () => juiceAudio.setVisible(!document.hidden);
+    const resumeFromGesture = () => {
+      if (!document.hidden) void juiceAudio.unlock();
+    };
+    if (import.meta.env.DEV) {
+      const writeDiagnostics = () => {
+        const diagnostics = juiceAudio.getDiagnostics();
+        const signature = [
+          diagnostics.scene,
+          diagnostics.muted,
+          diagnostics.visible,
+          diagnostics.contextState,
+          diagnostics.schedulerActive,
+          diagnostics.schedulerGeneration,
+          diagnostics.transport,
+        ].join(":");
+        document.documentElement.dataset.juicersAudioDiagnostics = JSON.stringify(diagnostics);
+        if (signature !== lastDiagnosticsSignature) {
+          lastDiagnosticsSignature = signature;
+          diagnosticsHistory.push({ at: performance.now(), ...diagnostics });
+          document.documentElement.dataset.juicersAudioHistory = JSON.stringify(diagnosticsHistory.slice(-40));
+        }
+      };
+      writeDiagnostics();
+      diagnosticsTimer = window.setInterval(writeDiagnostics, 120);
+    }
+    handleVisibility();
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pointerdown", resumeFromGesture, { capture: true });
+    window.addEventListener("keydown", resumeFromGesture, { capture: true });
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pointerdown", resumeFromGesture, { capture: true });
+      window.removeEventListener("keydown", resumeFromGesture, { capture: true });
+      if (diagnosticsTimer !== null) window.clearInterval(diagnosticsTimer);
+      if (import.meta.env.DEV) {
+        delete document.documentElement.dataset.juicersAudioDiagnostics;
+        delete document.documentElement.dataset.juicersAudioHistory;
+      }
+      juiceAudio.setScene("silent");
+    };
+  }, []);
+
+  useEffect(() => {
     if (!cameraActive || (screen !== "tutorial" && screen !== "playing")) {
       handsMissingSinceRef.current = null;
       return;
@@ -338,6 +386,19 @@ export function App() {
   const canvasPhase = screen === "tutorial" ? "tutorial" : screen === "countdown" ? "countdown" : screen === "playing" ? "playing" : "results";
   const timerWarning = snapshot.timeLeft <= 10;
   const setupStage = visionStatus === "ready" ? "ready" : cameraActive ? "tracking" : "camera";
+
+  useEffect(() => {
+    const audioScene: AudioScene = screen === "tutorial"
+      ? "tutorial"
+      : screen === "countdown"
+        ? "countdown"
+        : screen === "playing"
+          ? timerWarning ? "urgent" : "playing"
+          : screen === "results"
+            ? "results"
+            : "silent";
+    juiceAudio.setScene(audioScene);
+  }, [screen, timerWarning]);
 
   return (
     <main className={`app app--${screen}`}>
