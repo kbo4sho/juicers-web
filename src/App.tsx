@@ -79,9 +79,15 @@ function CustomerOrderCard({ order, index, aimed }: { order: CustomerOrderSnapsh
     <article
       className={`order-card${order.completed ? " order-card--complete" : ""}${aimed ? " order-card--aimed" : ""} order-card--${order.patience}`}
       style={{ "--order-accent": order.accent, "--order-progress": `${progress * 100}%` } as React.CSSProperties}
-      aria-label={`${order.customer}'s ${order.drink}: ${filledCount} of ${order.ingredients.length} fruits added${order.completed ? ", complete" : aimed ? ", currently aimed" : ""}`}
+      aria-current={aimed && !order.completed ? "true" : undefined}
+      aria-label={`${order.customer}'s ${order.drink}: ${filledCount} of ${order.ingredients.length} fruits added${order.completed ? ", complete" : aimed ? ", currently serving" : ""}`}
     >
-      {aimed && !order.completed && <div className="order-card__aim" aria-hidden="true">POUR HERE</div>}
+      {aimed && !order.completed && (
+        <div className="order-card__aim" aria-hidden="true">
+          <small>NOW</small>
+          <strong>SERVING</strong>
+        </div>
+      )}
       <div className="order-card__topline">
         <span className="customer-avatar" aria-hidden="true"><img src={customer.portrait} alt="" /></span>
         <span className="order-card__customer">
@@ -675,7 +681,7 @@ export function App() {
 
       {(screen === "playing" || screen === "practice") && (
         <>
-          <section className="order-rail" aria-label="Customer orders">
+          <section className={`order-rail${snapshot.aimedOrderId !== null ? " order-rail--aiming" : ""}`} aria-label="Customer orders">
             {snapshot.orders.map((order, index) => (
               <CustomerOrderCard
                 order={order}
