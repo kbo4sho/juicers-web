@@ -1344,6 +1344,7 @@ export function GameCanvas({
       engine.items = engine.items.filter((item) => item.y < height + item.radius * 2);
 
       const frame = trackingRef.current;
+      const previousAim = engine.aimedOrderId;
       const aim = previewAim(frame.hands, engine.orders, frame.source === "demo");
       engine.aimedOrderId = aim.orderId;
       frame.hands.forEach((hand) => {
@@ -1377,7 +1378,7 @@ export function GameCanvas({
       engine.flash.amount = Math.max(0, engine.flash.amount - delta * 1.7);
       engine.shake = Math.max(0, engine.shake - delta * 32);
 
-      if (now - engine.lastHudUpdate >= 90) {
+      if (engine.aimedOrderId !== previousAim || now - engine.lastHudUpdate >= 90) {
         engine.lastHudUpdate = now;
         callbackRef.current.onSnapshot(snapshot(engine, now, roundModeRef.current));
       }

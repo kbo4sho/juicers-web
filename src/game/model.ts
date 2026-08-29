@@ -299,7 +299,6 @@ export function activeOrders<T extends AimableOrder>(orders: readonly T[]): T[] 
 export function resolveAimedOrder(handX: number, orders: readonly AimableOrder[]): AimPreview {
   const open = activeOrders(orders);
   if (open.length === 0) return { orderId: null, mode: "open" };
-  if (handX < AIM_RAIL_LEFT || handX > AIM_RAIL_RIGHT) return { orderId: null, mode: "open" };
   const centers = railCenters(open.length);
   const index = nearestIndex(handX, centers);
   return { orderId: open[index]?.id ?? null, mode: "locked" };
@@ -333,35 +332,44 @@ export function resolveSqueezeTarget(
   const open = activeOrders(orders);
   const aimed = resolveAimedOrder(handX, open);
 
-  if (aimed.mode === "locked" && aimed.orderId !== null) {
-    const ticket = open.find((order) => order.id === aimed.orderId) ?? null;
-    if (ticket && orderWantsFruit(ticket, kind)) {
-      return { kind: "served", orderId: ticket.id, aimedOrderId: ticket.id };
-    }
-    return { kind: "wrong-ticket", orderId: ticket?.id ?? null, aimedOrderId: ticket?.id ?? null };
+  if (aimed.orderId === null) {
+    return { kind: "nobody", orderId: null, aimedOrderId: null };
+  }
+
+  const ticket = open.find((order) => order.id === aimed.orderId) ?? null;
+  if (ticket && orderWantsFruit(ticket, kind)) {
+    return { kind: "served", orderId: ticket.id, aimedOrderId: ticket.id };
+  }
+  if (ticket) {
+    return { kind: "wrong-ticket", orderId: ticket.id, aimedOrderId: ticket.id };
   }
 
   const matching = open.filter((order) => orderWantsFruit(order, kind));
   if (matching.length === 0) {
-    return { kind: "nobody", orderId: null, aimedOrderId: null };
+    return { kind: "nobody", orderId: null, aimedOrderId: aimed.orderId };
   }
-
   const centers = railCenters(open.length);
-  const matchingByDistance = [...matching].sort((left, right) => {
+  const fallback = [...matching].sort((left, right) => {
     const leftIndex = open.findIndex((order) => order.id === left.id);
     const rightIndex = open.findIndex((order) => order.id === right.id);
     return Math.abs(handX - (centers[leftIndex] ?? 0.5)) - Math.abs(handX - (centers[rightIndex] ?? 0.5));
-  });
-  const fallback = matchingByDistance[0];
-  return { kind: "fallback", orderId: fallback.id, aimedOrderId: null };
+  })[0];
+  return { kind: "fallback", orderId: fallback.id, aimedOrderId: fallback.id };
 }
 
 export function previewAim(
   hands: readonly AimHand[],
   orders: readonly AimableOrder[],
   preferRight: boolean,
+  fruitKind?: FruitKind,
 ): AimPreview {
   const hand = selectAimingHand(hands, preferRight);
   if (!hand) return { orderId: null, mode: "open" };
+  if (fruitKind) {
+    const target = resolveSqueezeTarget(hand.x, fruitKind, orders);
+    if (target.orderId !== null) {
+      return { orderId: target.orderId, mode: target.kind === "nobody" ? "open" : "locked" };
+    }
+  }
   return resolveAimedOrder(hand.x, orders);
 }

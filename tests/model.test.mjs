@@ -99,18 +99,41 @@ test("an aimed ticket that does not want the fruit is a miss, not a dump", () =>
   assert.equal(result.aimedOrderId, 1);
 });
 
-test("aimed at nobody falls back to the nearest matching ticket", () => {
+test("previewed card is the card that would be served, including off the old rail band", () => {
   const orders = [
     ticket({ id: 1, customer: "Maya", drink: "Citrus Pop", ingredients: ["orange", "lime"], filled: [false, false] }),
     ticket({ id: 2, customer: "Pip", drink: "Sunset Splash", ingredients: ["orange", "berry", "pineapple"], filled: [false, false, false] }),
   ];
-  const preview = model.resolveAimedOrder(0.04, orders);
-  assert.equal(preview.mode, "open");
-  assert.equal(preview.orderId, null);
-  const result = model.resolveSqueezeTarget(0.04, "berry", orders);
-  assert.equal(result.kind, "fallback");
-  assert.equal(result.orderId, 2);
-  assert.equal(result.aimedOrderId, null);
+  const hands = [{ id: "right", x: 0.04, closed: false }];
+  const preview = model.previewAim(hands, orders, true);
+  const squeeze = model.resolveSqueezeTarget(0.04, "berry", orders);
+  assert.equal(preview.orderId, squeeze.orderId);
+  assert.equal(preview.orderId, 1);
+  assert.equal(squeeze.kind, "wrong-ticket");
+  assert.equal(squeeze.aimedOrderId, 1);
+
+  const servedPreview = model.previewAim([{ id: "right", x: 0.72, closed: false }], orders, true, "orange");
+  const served = model.resolveSqueezeTarget(0.72, "orange", orders);
+  assert.equal(servedPreview.orderId, served.orderId);
+  assert.equal(served.kind, "served");
+  assert.equal(served.orderId, 2);
+});
+
+test("glove X always selects a ticket while any order is open", () => {
+  const orders = [
+    ticket({ id: 1, customer: "Maya", drink: "Citrus Pop", ingredients: ["orange", "lime"], filled: [false, false] }),
+    ticket({ id: 3, customer: "Mina", drink: "Melon Mist", ingredients: ["melon", "lime"], filled: [false, false] }),
+  ];
+  for (const x of [0.02, 0.16, 0.5, 0.84, 0.98]) {
+    const preview = model.resolveAimedOrder(x, orders);
+    assert.equal(preview.mode, "locked");
+    assert.ok(preview.orderId === 1 || preview.orderId === 3, `x=${x} selected ${preview.orderId}`);
+    const squeeze = model.resolveSqueezeTarget(x, "lime", orders);
+    assert.equal(squeeze.orderId, preview.orderId);
+    assert.equal(squeeze.aimedOrderId, preview.orderId);
+  }
+  assert.equal(model.resolveAimedOrder(0.1, orders).orderId, 1);
+  assert.equal(model.resolveAimedOrder(0.9, orders).orderId, 3);
 });
 
 test("demo aiming prefers the right glove until a fist closes", () => {
