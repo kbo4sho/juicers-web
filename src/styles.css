@@ -265,6 +265,7 @@ button:focus-visible, canvas:focus-visible { outline: 3px solid #fff176; outline
 
 .order-card--aimed {
   z-index: 3;
+  overflow: visible;
   transform: translateY(-10px) rotate(-0.6deg) scale(1.04);
   box-shadow: 0 0 0 3px #ffe27a, 7px 9px 0 rgba(58,23,54,.75), 0 16px 28px rgba(5,1,15,.26);
 }
@@ -547,6 +548,7 @@ button:focus-visible, canvas:focus-visible { outline: 3px solid #fff176; outline
 .diner-lamp i { position: absolute; z-index: 1; left: 50%; bottom: -9px; width: 10px; height: 10px; border: 2px solid var(--ink); border-radius: 50%; transform: translateX(-50%); background: #ffe178; }
 .diner-lamp--left { left: 22%; }.diner-lamp--right { right: 22%; height: 116px; }
 .diner-menu { position: absolute; top: 26%; display: grid; align-content: start; gap: 7px; width: clamp(130px, 14vw, 205px); min-height: 128px; padding: 26px 16px 14px; border: 5px solid var(--ink); border-radius: 12px 7px 14px 8px; background: #173e46; box-shadow: 0 0 0 4px var(--cream), 8px 10px 0 rgba(58,23,54,.34); }
+.welcome-shell .diner-menu { z-index: 3; top: 33%; }
 .diner-menu::before { content: "FRESH PRESSED"; position: absolute; top: 7px; left: 13px; color: var(--orange); font: 900 8px "Archivo Black", Impact, sans-serif; letter-spacing: .8px; }
 .diner-menu b { display: block; overflow: hidden; color: var(--cream); font: 800 9px/1.15 "Archivo Black", Impact, sans-serif; letter-spacing: .2px; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; border-bottom: 1px solid rgba(244,223,189,.28); padding-bottom: 5px; }
 .diner-menu--left { left: 3%; transform: rotate(-2deg); }.diner-menu--right { right: 3%; transform: rotate(2deg); }.diner-menu--right::before { content: "HOUSE MIXES"; color: var(--mint); }

@@ -1149,7 +1149,13 @@ export function GameCanvas({
       } else {
         const neededFruit = engine.orders
           .filter((order) => !order.completed)
-          .flatMap((order) => order.ingredients.filter((_, index) => !order.filled[index]));
+          .flatMap((order) => {
+            if (engine.practice) {
+              const next = order.ingredients.find((_, index) => !order.filled[index]);
+              return next ? [next] : [];
+            }
+            return order.ingredients.filter((_, index) => !order.filled[index]);
+          });
         const shouldMatch = neededFruit.length > 0 && (engine.practice || engine.random() < 0.68);
         const kind = shouldMatch
           ? neededFruit[Math.floor(engine.random() * neededFruit.length)]
@@ -1158,13 +1164,13 @@ export function GameCanvas({
           id: engine.itemId++,
           type: "fruit",
           kind,
-          x: engine.practice ? 0.42 + engine.random() * 0.16 : 0.08 + engine.random() * 0.84,
-          y: engine.practice ? height * 0.5 : -baseRadius * 1.6,
-          radius: baseRadius * (0.86 + engine.random() * 0.18),
-          velocityX: (engine.random() - 0.5) * (engine.practice ? 0.01 : 0.045 + progress * 0.035),
-          velocityY: engine.practice ? 72 + engine.random() * 18 : 150 + progress * 205 + engine.random() * 55,
+          x: engine.practice ? 0.52 : 0.08 + engine.random() * 0.84,
+          y: engine.practice ? height * 0.58 : -baseRadius * 1.6,
+          radius: baseRadius * (engine.practice ? 1.08 : 0.86 + engine.random() * 0.18),
+          velocityX: (engine.random() - 0.5) * (engine.practice ? 0.004 : 0.045 + progress * 0.035),
+          velocityY: engine.practice ? 38 + engine.random() * 10 : 150 + progress * 205 + engine.random() * 55,
           rotation: engine.random() * Math.PI * 2,
-          rotationSpeed: (engine.random() - 0.5) * (engine.practice ? 0.8 : 2.5),
+          rotationSpeed: (engine.random() - 0.5) * (engine.practice ? 0.45 : 2.5),
         });
       }
       const interval = engine.practice
