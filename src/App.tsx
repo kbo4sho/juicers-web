@@ -3,7 +3,10 @@ import { juiceAudio } from "./game/audio";
 import type { AudioScene } from "./game/audioScore";
 import { GameCanvas } from "./game/GameCanvas";
 import {
+  drinkArtSlug,
+  FRESH_PRESSED_MENU,
   FRUIT_META,
+  HOUSE_MIXES_MENU,
   rankForScore,
   type CustomerOrderSnapshot,
   type FruitKind,
@@ -18,7 +21,7 @@ import {
   type VisionStatus,
 } from "./game/tracking";
 
-type Screen = "welcome" | "permission" | "tutorial" | "countdown" | "playing" | "results";
+type Screen = "welcome" | "permission" | "tutorial" | "practice" | "countdown" | "playing" | "results";
 type PlayMode = "camera" | "demo";
 type HandTrackingStatus = "waiting" | "both" | "one" | "missing";
 
@@ -34,6 +37,7 @@ const initialSnapshot: RoundSnapshot = {
   orderStreak: 0,
   frenzyLeft: 0,
   freezeLeft: 0,
+  aimedOrderId: null,
 };
 
 const CUSTOMER_UI: Record<string, { portrait: string; quote: string }> = {
@@ -60,24 +64,28 @@ function FruitDot({ kind, large = false }: { kind: FruitKind; large?: boolean })
 }
 
 function drinkAssetPath(drink: string) {
-  const slug = drink.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-  return `${import.meta.env.BASE_URL}drinks/${slug}.webp`;
+  return `${import.meta.env.BASE_URL}drinks/${drinkArtSlug(drink)}.webp`;
 }
 
-function CustomerOrderCard({ order, index }: { order: CustomerOrderSnapshot; index: number }) {
+function prefersReducedMotion() {
+  return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function CustomerOrderCard({ order, index, aimed }: { order: CustomerOrderSnapshot; index: number; aimed: boolean }) {
   const filledCount = order.filled.filter(Boolean).length;
   const progress = filledCount / order.ingredients.length;
   const customer = CUSTOMER_UI[order.customer] ?? CUSTOMER_UI.Maya;
   return (
     <article
-      className={`order-card${order.completed ? " order-card--complete" : ""}`}
+      className={`order-card${order.completed ? " order-card--complete" : ""}${aimed ? " order-card--aimed" : ""} order-card--${order.patience}`}
       style={{ "--order-accent": order.accent, "--order-progress": `${progress * 100}%` } as React.CSSProperties}
-      aria-label={`${order.customer}'s ${order.drink}: ${filledCount} of ${order.ingredients.length} fruits added${order.completed ? ", complete" : ""}`}
+      aria-label={`${order.customer}'s ${order.drink}: ${filledCount} of ${order.ingredients.length} fruits added${order.completed ? ", complete" : aimed ? ", currently aimed" : ""}`}
     >
+      {aimed && !order.completed && <div className="order-card__aim" aria-hidden="true">POUR HERE</div>}
       <div className="order-card__topline">
         <span className="customer-avatar" aria-hidden="true"><img src={customer.portrait} alt="" /></span>
         <span className="order-card__customer">
-          <small>COUNTER {String(index + 1).padStart(2, "0")}</small>
+          <small>COUNTER {String(index + 1).padStart(2, "0")} · {order.tag}</small>
           <strong>{order.customer}</strong>
           <em>{order.completed ? "Perfect!" : customer.quote}</em>
         </span>
@@ -123,8 +131,12 @@ function DinerBackdrop() {
     <div className="diner-set" aria-hidden="true">
       <span className="diner-lamp diner-lamp--left"><i /></span>
       <span className="diner-lamp diner-lamp--right"><i /></span>
-      <span className="diner-menu diner-menu--left"><i /><i /><i /><i /></span>
-      <span className="diner-menu diner-menu--right"><i /><i /><i /><i /></span>
+      <span className="diner-menu diner-menu--left">
+        {FRESH_PRESSED_MENU.map((drink) => <b key={drink}>{drink}</b>)}
+      </span>
+      <span className="diner-menu diner-menu--right">
+        {HOUSE_MIXES_MENU.map((drink) => <b key={drink}>{drink}</b>)}
+      </span>
       <span className="diner-shelf"><i /><i /><i /><i /><i /></span>
       <span className="diner-counter"><i /><i /><i /></span>
     </div>
@@ -230,7 +242,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!cameraActive || (screen !== "tutorial" && screen !== "playing")) {
+    if (!cameraActive || (screen !== "tutorial" && screen !== "practice" && screen !== "playing")) {
       handsMissingSinceRef.current = null;
       return;
     }
@@ -328,7 +340,7 @@ export function App() {
     }
   }, []);
 
-  const startRound = useCallback((nextRoundMode: RoundMode) => {
+  const startRound = useCallback((nextRoundMode: RoundMode, withPractice = true) => {
     void juiceAudio.unlock();
     setRoundMode(nextRoundMode);
     setResult(null);
@@ -338,12 +350,28 @@ export function App() {
     });
     setAnnouncement("");
     setCountdown(3);
+    setScreen(withPractice ? "practice" : "countdown");
+  }, []);
+
+  const finishPractice = useCallback(() => {
+    setCountdown(prefersReducedMotion() ? 0 : 3);
     setScreen("countdown");
   }, []);
 
   useEffect(() => {
     if (screen !== "countdown") return;
     const timers: number[] = [];
+    if (prefersReducedMotion()) {
+      setCountdown(0);
+      juiceAudio.play("start");
+      timers.push(
+        window.setTimeout(() => {
+          setPlayToken((token) => token + 1);
+          setScreen("playing");
+        }, 420),
+      );
+      return () => timers.forEach(window.clearTimeout);
+    }
     const cue = (after: number, value: number) => {
       timers.push(
         window.setTimeout(() => {
@@ -387,7 +415,7 @@ export function App() {
 
   const replay = useCallback(() => {
     setRoundNumber((round) => round + 1);
-    startRound(roundMode);
+    startRound(roundMode, false);
   }, [roundMode, startRound]);
 
   const switchMode = useCallback(() => {
@@ -410,12 +438,20 @@ export function App() {
   const accuracy = result && result.correct + result.misses > 0
     ? Math.round((result.correct / (result.correct + result.misses)) * 100)
     : 0;
-  const canvasPhase = screen === "tutorial" ? "tutorial" : screen === "countdown" ? "countdown" : screen === "playing" ? "playing" : "results";
+  const canvasPhase = screen === "tutorial"
+    ? "tutorial"
+    : screen === "practice"
+      ? "practice"
+      : screen === "countdown"
+        ? "countdown"
+        : screen === "playing"
+          ? "playing"
+          : "results";
   const timerWarning = roundMode === "timed" && snapshot.timeLeft !== null && snapshot.timeLeft <= 10;
   const setupStage = visionStatus === "ready" ? "ready" : cameraActive ? "tracking" : "camera";
 
   useEffect(() => {
-    const audioScene: AudioScene = screen === "tutorial"
+    const audioScene: AudioScene = screen === "tutorial" || screen === "practice"
       ? "tutorial"
       : screen === "countdown"
         ? "countdown"
@@ -443,6 +479,7 @@ export function App() {
           onSnapshot={setSnapshot}
           onFinish={handleFinish}
           onAnnounce={setAnnouncement}
+          onPracticeComplete={finishPractice}
         />
       )}
 
@@ -547,7 +584,7 @@ export function App() {
         </section>
       )}
 
-      {(screen === "tutorial" || screen === "countdown" || screen === "playing" || screen === "results") && (
+      {(screen === "tutorial" || screen === "practice" || screen === "countdown" || screen === "playing" || screen === "results") && (
         <header className="game-header">
           <Brand compact />
           {screen === "playing" && (
@@ -591,9 +628,9 @@ export function App() {
               <div><span>MAYA SAYS</span><h1 id="tutorial-title">Three moves. Two ways to pour.</h1></div>
             </div>
             <div className="tutorial-steps">
-              <article><span className="step-number">01</span><FruitDot kind="lime" /><div><strong>Read the tickets</strong><p>Squeeze any fruit a customer still needs. It fills the first matching order.</p></div></article>
+              <article><span className="step-number">01</span><FruitDot kind="lime" /><div><strong>Aim a ticket</strong><p>Move a glove over a customer, then squeeze a fruit they still need. The highlighted ticket is the only one that gets the pour.</p></div></article>
               <article><span className="step-number">02</span><span className="hand-diagram" aria-hidden="true">✦</span><div><strong>Overlap + squeeze</strong><p>{mode === "camera" ? "Move either hand onto it, then close your fist." : "Move with mouse or keys, then click or press Space."}</p></div></article>
-              <article><span className="step-number">03</span><span className="combo-diagram" aria-hidden="true">8×</span><div><strong>Call “order up!”</strong><p>Finish recipes for big bonuses. New customers keep joining the queue.</p></div></article>
+              <article><span className="step-number">03</span><span className="combo-diagram" aria-hidden="true">8×</span><div><strong>Call “order up!”</strong><p>Finish recipes for big bonuses. Regulars want different drinks — Theo keeps it small, Dax goes huge.</p></div></article>
             </div>
             {mode === "camera" ? (
               <div className="tracking-check">
@@ -621,16 +658,32 @@ export function App() {
                   <i aria-hidden="true">→</i>
                 </button>
               </div>
+              <p className="round-choice__note">Next: one untimed practice squeeze, then the round begins.</p>
             </div>
             <button className="text-button" onClick={switchMode}>{mode === "camera" ? "Use demo controls instead" : "Back to mode select"}</button>
           </div>
         </section>
       )}
 
-      {screen === "playing" && (
+      {screen === "practice" && (
+        <div className="practice-banner" role="status" aria-live="polite">
+          <small>PRACTICE POUR</small>
+          <strong>Land one squeeze to start</strong>
+          <span>{mode === "camera" ? "Overlap Maya’s orange, then close your fist." : "Move onto Maya’s orange, then click or press Space."}</span>
+        </div>
+      )}
+
+      {(screen === "playing" || screen === "practice") && (
         <>
           <section className="order-rail" aria-label="Customer orders">
-            {snapshot.orders.map((order, index) => <CustomerOrderCard order={order} index={index} key={order.id} />)}
+            {snapshot.orders.map((order, index) => (
+              <CustomerOrderCard
+                order={order}
+                index={index}
+                aimed={snapshot.aimedOrderId === order.id}
+                key={order.id}
+              />
+            ))}
           </section>
           {mode === "camera" && (
             <aside className="status-rail" aria-label="Tracking status">
@@ -655,7 +708,13 @@ export function App() {
               {snapshot.freezeLeft > 0 && <span className="power-status__freeze">CHILL FLOW · {Math.ceil(snapshot.freezeLeft)}s</span>}
             </div>
           )}
-          <div className="control-hint">{mode === "camera" ? "OVERLAP FRUIT · CLOSE FIST · REOPEN TO SQUEEZE AGAIN" : "MOVE: MOUSE / ARROWS  ·  SQUEEZE: CLICK / SPACE"}</div>
+          <div className="control-hint">
+            {screen === "practice"
+              ? (mode === "camera" ? "PRACTICE · OVERLAP FRUIT · CLOSE FIST" : "PRACTICE · MOVE ONTO THE FRUIT · SQUEEZE")
+              : mode === "camera"
+                ? "AIM A TICKET · OVERLAP FRUIT · CLOSE FIST"
+                : "AIM WITH THE GLOVE  ·  SQUEEZE: CLICK / SPACE"}
+          </div>
         </>
       )}
 

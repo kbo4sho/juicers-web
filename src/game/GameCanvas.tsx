@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useRef } from "react";
 import { juiceAudio } from "./audio";
 import {
+  chalkboardLines,
+  createCustomerOrder,
+  createPracticeOrder,
   createSeededRandom,
+  FRESH_PRESSED_MENU,
   FRUIT_META,
   FRUITS,
+  HOUSE_MIXES_MENU,
+  personaByName,
+  previewAim,
   rankForScore,
+  resolveSqueezeTarget,
   scoreJuice,
   type CustomerOrderSnapshot,
   type FruitKind,
@@ -15,7 +23,7 @@ import {
 } from "./model";
 import type { TrackedPoint, TrackingFrame } from "./tracking";
 
-type Phase = "tutorial" | "countdown" | "playing" | "results";
+type Phase = "tutorial" | "practice" | "countdown" | "playing" | "results";
 
 type Props = {
   phase: Phase;
@@ -28,6 +36,7 @@ type Props = {
   onSnapshot: (snapshot: RoundSnapshot) => void;
   onFinish: (result: RoundResult) => void;
   onAnnounce: (message: string) => void;
+  onPracticeComplete?: () => void;
 };
 
 type FallingItem = {
@@ -107,6 +116,9 @@ type Engine = {
   flash: { color: string; amount: number };
   shake: number;
   lastHudUpdate: number;
+  aimedOrderId: number | null;
+  practice: boolean;
+  practiceDone: boolean;
 };
 
 const ROUND_SECONDS = 60;
@@ -121,29 +133,7 @@ if (typeof Image !== "undefined") {
   });
 }
 
-const CUSTOMERS = [
-  { name: "Maya", accent: "#ff789f" },
-  { name: "Theo", accent: "#65dfca" },
-  { name: "Pip", accent: "#ff8a4c" },
-  { name: "Mina", accent: "#f0a23d" },
-  { name: "Zara", accent: "#7ad5ff" },
-  { name: "Dax", accent: "#9b6cff" },
-] as const;
-
-const DRINKS: { name: string; ingredients: FruitKind[] }[] = [
-  { name: "Citrus Pop", ingredients: ["orange", "lime"] },
-  { name: "Berry Glow", ingredients: ["berry", "orange"] },
-  { name: "Melon Mist", ingredients: ["melon", "lime"] },
-  { name: "Golden Crush", ingredients: ["pineapple", "orange"] },
-  { name: "Sunset Splash", ingredients: ["orange", "berry", "pineapple"] },
-  { name: "Green Machine", ingredients: ["lime", "melon", "pineapple"] },
-  { name: "Pink Paradise", ingredients: ["berry", "melon", "orange"] },
-  { name: "Tropic Thunder", ingredients: ["pineapple", "orange", "lime", "melon"] },
-  { name: "Rainbow Rush", ingredients: ["berry", "lime", "orange", "pineapple"] },
-  { name: "Juicer Deluxe", ingredients: ["melon", "berry", "pineapple", "lime"] },
-];
-
-function newEngine(seed: number): Engine {
+function newEngine(seed: number, practice = false): Engine {
   const random = createSeededRandom(seed);
   return {
     running: false,
@@ -171,34 +161,31 @@ function newEngine(seed: number): Engine {
     flash: { color: "#ffffff", amount: 0 },
     shake: 0,
     lastHudUpdate: 0,
+    aimedOrderId: null,
+    practice,
+    practiceDone: false,
   };
 }
 
-function createOrder(engine: Engine, elapsed: number): CustomerOrder {
-  const maxIngredients = elapsed < 14 ? 2 : elapsed < 38 ? 3 : 4;
-  const eligible = DRINKS.filter((drink) => drink.ingredients.length <= maxIngredients);
-  const previousDrink = engine.orders.at(-1)?.drink;
-  const choices = eligible.filter((drink) => drink.name !== previousDrink);
-  const drink = choices[Math.floor(engine.random() * choices.length)] ?? eligible[0];
-  const customer = CUSTOMERS[(engine.orderId - 1) % CUSTOMERS.length];
-  const order: CustomerOrder = {
-    id: engine.orderId,
-    customer: customer.name,
-    drink: drink.name,
-    accent: customer.accent,
-    ingredients: [...drink.ingredients],
-    filled: drink.ingredients.map(() => false),
-    completed: false,
-    completedUntil: 0,
-  };
+function createOrder(engine: Engine): CustomerOrder {
+  const seated = engine.orders.map((order) => order.customer);
+  const taken = engine.orders.map((order) => order.drink);
+  const order = createCustomerOrder(engine.orderId, seated, taken, engine.random);
   engine.orderId += 1;
-  return order;
+  return { ...order, completedUntil: 0 };
 }
 
 function refreshOrders(engine: Engine, now: number, elapsed: number) {
   engine.orders = engine.orders.filter((order) => !order.completed || now < order.completedUntil);
+  if (engine.practice) {
+    if (engine.orders.length === 0) {
+      engine.orders.push({ ...createPracticeOrder(), completedUntil: 0 });
+      engine.orderId = 2;
+    }
+    return;
+  }
   const desiredOrders = elapsed < 22 ? 3 : 4;
-  while (engine.orders.length < desiredOrders) engine.orders.push(createOrder(engine, elapsed));
+  while (engine.orders.length < desiredOrders) engine.orders.push(createOrder(engine));
 }
 
 function roundedRect(
@@ -461,8 +448,9 @@ function drawMenuBoard(
   width: number,
   label: string,
   accent: string,
+  lines: readonly string[],
 ) {
-  const height = Math.max(86, width * 0.56);
+  const height = Math.max(98, width * 0.62);
   const border = Math.max(5, width * 0.04);
   context.save();
 
@@ -516,19 +504,27 @@ function drawMenuBoard(
   context.textBaseline = "middle";
   context.fillText(label, cupX + 16, cupY - 1, width - border * 2 - 44);
 
-  context.strokeStyle = "rgba(243,223,189,.58)";
+  context.strokeStyle = "rgba(243,223,189,.22)";
   context.lineCap = "round";
-  context.lineWidth = 2;
-  const rowStart = y + height * 0.58;
+  context.lineWidth = 1.5;
+  const rowStart = y + height * 0.46;
+  const rowGap = Math.max(14, height * 0.15);
   for (let row = 0; row < 3; row += 1) {
-    const lineY = rowStart + row * Math.max(10, height * 0.11);
+    const lineY = rowStart + row * rowGap;
     context.beginPath();
-    context.moveTo(x + border + 13, lineY);
-    context.lineTo(x + width - border - (row === 1 ? 26 : 13), lineY);
+    context.moveTo(x + border + 10, lineY + 6);
+    context.lineTo(x + width - border - 10, lineY + 6);
     context.stroke();
+    const drink = lines[row];
+    if (!drink) continue;
+    context.fillStyle = "#f3dfbd";
+    context.font = `800 ${Math.max(9, width * 0.072)}px "Arial Rounded MT Bold", system-ui`;
+    context.textAlign = "left";
+    context.textBaseline = "alphabetic";
+    context.fillText(drink, x + border + 12, lineY + 2, width - border * 2 - 28);
     context.fillStyle = accent;
     context.beginPath();
-    context.arc(x + width - border - 8, lineY, 2.3, 0, Math.PI * 2);
+    context.arc(x + width - border - 11, lineY, 2.2, 0, Math.PI * 2);
     context.fill();
   }
 
@@ -594,6 +590,8 @@ function drawBackdrop(
   context: CanvasRenderingContext2D,
   width: number,
   height: number,
+  freshPressed: readonly string[] = FRESH_PRESSED_MENU,
+  houseMixes: readonly string[] = HOUSE_MIXES_MENU,
 ) {
   const ink = "#321432";
   const cream = "#f3dfbd";
@@ -700,8 +698,8 @@ function drawBackdrop(
   const menuY = Math.max(274, height * 0.345);
   const menuWidth = Math.max(116, Math.min(184, width * 0.145));
   const menuMargin = Math.max(18, width * 0.055);
-  drawMenuBoard(context, menuMargin, menuY, menuWidth, "FRESH PRESSED", mint);
-  drawMenuBoard(context, width - menuMargin - menuWidth, menuY, menuWidth, "HOUSE MIXES", "#ffc84c");
+  drawMenuBoard(context, menuMargin, menuY, menuWidth, "FRESH PRESSED", mint, freshPressed);
+  drawMenuBoard(context, width - menuMargin - menuWidth, menuY, menuWidth, "HOUSE MIXES", "#ffc84c", houseMixes);
 
   // Quiet side-wall story details: a pair of sconce starbursts stay outside the play focus.
   const sparkRadius = Math.max(14, Math.min(23, width * 0.019));
@@ -886,17 +884,27 @@ function drawHand(
   }
   context.restore();
 
-  context.fillStyle = accent;
+  const tagWidth = 72;
+  const tagHeight = 28;
+  context.fillStyle = "#321432";
+  roundedRect(context, -tagWidth / 2 + 2, 31, tagWidth, tagHeight, 9);
+  context.fill();
+  context.fillStyle = closed ? "#ffe27a" : "#f3dfbd";
   context.strokeStyle = "#321432";
-  context.lineWidth = 4;
-  roundedRect(context, -29, 29, 58, 22, 8);
+  context.lineWidth = 3.5;
+  roundedRect(context, -tagWidth / 2, 29, tagWidth, tagHeight, 9);
   context.fill();
   context.stroke();
-  context.fillStyle = accentDark;
-  context.font = "1000 10px system-ui";
+  context.fillStyle = closed ? "#c45a32" : accent;
+  context.fillRect(-tagWidth / 2 + 4, 32, 5, tagHeight - 6);
+  context.fillStyle = "#321432";
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.fillText(`${id === "left" ? "L" : "R"} · ${closed ? "POP" : "OPEN"}`, 0, 40);
+  context.font = "1000 10px system-ui";
+  context.fillText(id === "left" ? "LEFT" : "RIGHT", 2, 39);
+  context.fillStyle = closed ? accentDark : "#6a4458";
+  context.font = "800 8px system-ui";
+  context.fillText(closed ? "POUR" : "READY", 2, 50);
 
   if (closed) {
     context.strokeStyle = "#fff7a8";
@@ -959,9 +967,9 @@ function snapshot(engine: Engine, now: number, roundMode: RoundMode): RoundSnaps
     bestCombo: engine.bestCombo,
     correct: engine.correct,
     misses: engine.misses,
-    timeLeft: roundMode === "timed"
-      ? Math.max(0, ROUND_SECONDS - (now - engine.startedAt) / 1000)
-      : null,
+    timeLeft: engine.practice || roundMode !== "timed"
+      ? null
+      : Math.max(0, ROUND_SECONDS - (now - engine.startedAt) / 1000),
     orders: engine.orders.map(({ completedUntil: _completedUntil, ...order }) => ({
       ...order,
       ingredients: [...order.ingredients],
@@ -971,6 +979,7 @@ function snapshot(engine: Engine, now: number, roundMode: RoundMode): RoundSnaps
     orderStreak: engine.orderStreak,
     frenzyLeft: Math.max(0, (engine.frenzyUntil - now) / 1000),
     freezeLeft: Math.max(0, (engine.freezeUntil - now) / 1000),
+    aimedOrderId: engine.aimedOrderId,
   };
 }
 
@@ -985,12 +994,13 @@ export function GameCanvas({
   onSnapshot,
   onFinish,
   onAnnounce,
+  onPracticeComplete,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine>(newEngine(0x4a554943));
   const phaseRef = useRef(phase);
   const roundModeRef = useRef(roundMode);
-  const callbackRef = useRef({ onSnapshot, onFinish, onAnnounce });
+  const callbackRef = useRef({ onSnapshot, onFinish, onAnnounce, onPracticeComplete });
   const countdownRef = useRef(countdown);
 
   useEffect(() => {
@@ -1003,17 +1013,17 @@ export function GameCanvas({
     countdownRef.current = countdown;
   }, [countdown]);
   useEffect(() => {
-    callbackRef.current = { onSnapshot, onFinish, onAnnounce };
-  }, [onSnapshot, onFinish, onAnnounce]);
+    callbackRef.current = { onSnapshot, onFinish, onAnnounce, onPracticeComplete };
+  }, [onSnapshot, onFinish, onAnnounce, onPracticeComplete]);
 
   useEffect(() => {
-    if (phase !== "playing") return;
-    const engine = newEngine(0x4a554943 + roundNumber * 977 + playToken * 37);
+    if (phase !== "playing" && phase !== "practice") return;
+    const engine = newEngine(0x4a554943 + roundNumber * 977 + playToken * 37, phase === "practice");
     const now = performance.now();
     engine.running = true;
     engine.startedAt = now;
     engine.lastFrame = now;
-    engine.nextSpawnAt = now + 360;
+    engine.nextSpawnAt = now + (phase === "practice" ? 180 : 360);
     refreshOrders(engine, now, 0);
     engineRef.current = engine;
     onSnapshot(snapshot(engine, now, roundMode));
@@ -1115,8 +1125,12 @@ export function GameCanvas({
     observer.observe(canvas);
 
     const spawn = (engine: Engine, now: number, elapsed: number) => {
-      const progress = Math.min(1, elapsed / ROUND_SECONDS);
-      const powerChance = elapsed > 8 ? 0.065 : 0;
+      if (engine.practice && engine.items.length > 0) {
+        engine.nextSpawnAt = now + 400;
+        return;
+      }
+      const progress = engine.practice ? 0 : Math.min(1, elapsed / ROUND_SECONDS);
+      const powerChance = engine.practice ? 0 : elapsed > 8 ? 0.065 : 0;
       const isPower = engine.random() < powerChance;
       const baseRadius = Math.max(30, Math.min(47, width * 0.032));
       if (isPower) {
@@ -1136,7 +1150,7 @@ export function GameCanvas({
         const neededFruit = engine.orders
           .filter((order) => !order.completed)
           .flatMap((order) => order.ingredients.filter((_, index) => !order.filled[index]));
-        const shouldMatch = neededFruit.length > 0 && engine.random() < 0.68;
+        const shouldMatch = neededFruit.length > 0 && (engine.practice || engine.random() < 0.68);
         const kind = shouldMatch
           ? neededFruit[Math.floor(engine.random() * neededFruit.length)]
           : FRUITS[Math.floor(engine.random() * FRUITS.length)];
@@ -1144,21 +1158,23 @@ export function GameCanvas({
           id: engine.itemId++,
           type: "fruit",
           kind,
-          x: 0.08 + engine.random() * 0.84,
-          y: -baseRadius * 1.6,
+          x: engine.practice ? 0.42 + engine.random() * 0.16 : 0.08 + engine.random() * 0.84,
+          y: engine.practice ? height * 0.5 : -baseRadius * 1.6,
           radius: baseRadius * (0.86 + engine.random() * 0.18),
-          velocityX: (engine.random() - 0.5) * (0.045 + progress * 0.035),
-          velocityY: 150 + progress * 205 + engine.random() * 55,
+          velocityX: (engine.random() - 0.5) * (engine.practice ? 0.01 : 0.045 + progress * 0.035),
+          velocityY: engine.practice ? 72 + engine.random() * 18 : 150 + progress * 205 + engine.random() * 55,
           rotation: engine.random() * Math.PI * 2,
-          rotationSpeed: (engine.random() - 0.5) * 2.5,
+          rotationSpeed: (engine.random() - 0.5) * (engine.practice ? 0.8 : 2.5),
         });
       }
-      const interval = 970 - progress * 510 + engine.random() * 170;
+      const interval = engine.practice
+        ? 1600
+        : 970 - progress * 510 + engine.random() * 170;
       engine.nextSpawnAt = now + interval;
-      if (progress > 0.5 && engine.random() < 0.18) engine.nextSpawnAt -= interval * 0.45;
+      if (!engine.practice && progress > 0.5 && engine.random() < 0.18) engine.nextSpawnAt -= interval * 0.45;
     };
 
-    const hitItem = (engine: Engine, item: FallingItem, x: number, y: number, now: number) => {
+    const hitItem = (engine: Engine, item: FallingItem, x: number, y: number, now: number, handX: number) => {
       engine.items = engine.items.filter((candidate) => candidate.id !== item.id);
       if (item.type === "power") {
         const kind = item.kind as PowerKind;
@@ -1185,27 +1201,34 @@ export function GameCanvas({
 
       const kind = item.kind as FruitKind;
       const frenzy = engine.frenzyUntil > now;
-      const matchingOrder = engine.orders.find((order) =>
-        !order.completed && order.ingredients.some((ingredient, index) => ingredient === kind && !order.filled[index]),
-      );
+      const target = resolveSqueezeTarget(handX, kind, engine.orders);
+      const matchingOrder = target.orderId === null
+        ? undefined
+        : engine.orders.find((order) => order.id === target.orderId);
       const ingredientIndex = matchingOrder?.ingredients.findIndex((ingredient, index) => ingredient === kind && !matchingOrder.filled[index]) ?? -1;
-      const correct = Boolean(matchingOrder && ingredientIndex >= 0);
-      const scored = scoreJuice(engine.score, engine.combo, correct, frenzy);
-      engine.score = scored.score;
-      engine.combo = scored.combo;
-      engine.bestCombo = Math.max(engine.bestCombo, engine.combo);
+      const correct = (target.kind === "served" || target.kind === "fallback") && Boolean(matchingOrder && ingredientIndex >= 0);
+      const scored = engine.practice
+        ? { score: engine.score, combo: engine.combo, delta: 0 }
+        : scoreJuice(engine.score, engine.combo, correct, frenzy);
+      if (!engine.practice) {
+        engine.score = scored.score;
+        engine.combo = scored.combo;
+        engine.bestCombo = Math.max(engine.bestCombo, engine.combo);
+      }
       if (correct) {
         if (!matchingOrder || ingredientIndex < 0) return;
         matchingOrder.filled[ingredientIndex] = true;
-        engine.correct += 1;
+        if (!engine.practice) engine.correct += 1;
         const meta = FRUIT_META[kind];
         addSplatter(engine, x, y, meta.splash, 72 + Math.min(28, engine.combo * 2));
         createParticles(engine, x, y, [meta.color, meta.splash, "#fff4ad", meta.dark], 25 + Math.min(15, engine.combo), "drop");
         engine.texts.push({
           x,
           y,
-          label: engine.combo >= 8 ? "MEGA SPLASH!" : engine.combo >= 4 ? "COMBO POUR!" : "JUICY!",
-          sublabel: `+${scored.delta}${engine.combo > 1 ? `  ·  ${engine.combo}× COMBO` : ""}`,
+          label: engine.practice ? "NICE POUR!" : engine.combo >= 8 ? "MEGA SPLASH!" : engine.combo >= 4 ? "COMBO POUR!" : "JUICY!",
+          sublabel: engine.practice
+            ? `${matchingOrder.customer.toUpperCase()} · GET READY`
+            : `+${scored.delta}${engine.combo > 1 ? `  ·  ${engine.combo}× COMBO` : ""}`,
           color: frenzy ? "#ffe667" : meta.splash,
           life: 0.92,
           maxLife: 0.92,
@@ -1214,13 +1237,13 @@ export function GameCanvas({
         engine.flash = { color: meta.splash, amount: 0.22 };
         engine.shake = Math.min(11, 3 + engine.combo * 0.7);
         const orderComplete = matchingOrder.filled.every(Boolean);
-        if (orderComplete) {
+        if (orderComplete && !engine.practice) {
           const orderBonus = (300 + matchingOrder.ingredients.length * 125 + Math.min(500, engine.orderStreak * 75)) * (frenzy ? 2 : 1);
           engine.score += orderBonus;
           engine.ordersCompleted += 1;
           engine.orderStreak += 1;
           matchingOrder.completed = true;
-          matchingOrder.completedUntil = now + 950;
+          matchingOrder.completedUntil = now + personaByName(matchingOrder.customer).dwellMs;
           engine.texts.push({
             x: width * 0.5,
             y: Math.max(260, height * 0.43),
@@ -1239,18 +1262,35 @@ export function GameCanvas({
           callbackRef.current.onAnnounce(`${matchingOrder.customer}'s ${matchingOrder.drink} complete. Order up! ${orderBonus} bonus points. ${engine.ordersCompleted} ${engine.ordersCompleted === 1 ? "order" : "orders"} served.`);
         } else {
           juiceAudio.play("correct");
-          callbackRef.current.onAnnounce(`${meta.label} added to ${matchingOrder.customer}'s ${matchingOrder.drink}. Plus ${scored.delta}. ${matchingOrder.filled.filter(Boolean).length} of ${matchingOrder.ingredients.length} ingredients filled.`);
+          callbackRef.current.onAnnounce(
+            engine.practice
+              ? `Practice pour landed for ${matchingOrder.customer}. Starting the round.`
+              : `${meta.label} added to ${matchingOrder.customer}'s ${matchingOrder.drink}. Plus ${scored.delta}. ${matchingOrder.filled.filter(Boolean).length} of ${matchingOrder.ingredients.length} ingredients filled.`,
+          );
+        }
+        if (engine.practice && !engine.practiceDone) {
+          engine.practiceDone = true;
+          window.setTimeout(() => callbackRef.current.onPracticeComplete?.(), 520);
         }
       } else {
-        engine.misses += 1;
-        engine.orderStreak = 0;
+        if (!engine.practice) {
+          engine.misses += 1;
+          engine.orderStreak = 0;
+        }
+        const aimed = target.aimedOrderId === null
+          ? undefined
+          : engine.orders.find((order) => order.id === target.aimedOrderId);
         addSplatter(engine, x, y, "#ff375f", 88);
         createParticles(engine, x, y, ["#ff375f", "#681e4c", "#ffd3da"], 23, "dot");
         engine.texts.push({
           x,
           y,
-          label: "WRONG MIX",
-          sublabel: `${scored.delta || 0}  ·  COMBO LOST`,
+          label: target.kind === "wrong-ticket" ? "WRONG TICKET" : "WRONG MIX",
+          sublabel: target.kind === "wrong-ticket" && aimed
+            ? `${aimed.customer.toUpperCase()} DIDN'T WANT THAT`
+            : engine.practice
+              ? "AIM MAYA'S TICKET"
+              : `${scored.delta || 0}  ·  COMBO LOST`,
           color: "#ff6680",
           life: 1.06,
           maxLife: 1.06,
@@ -1259,7 +1299,11 @@ export function GameCanvas({
         engine.flash = { color: "#ff244f", amount: 0.4 };
         engine.shake = 16;
         juiceAudio.play("wrong");
-        callbackRef.current.onAnnounce(`No customer needs ${FRUIT_META[kind].label} right now. ${Math.abs(scored.delta)} point penalty. Combo reset.`);
+        callbackRef.current.onAnnounce(
+          target.kind === "wrong-ticket" && aimed
+            ? `${aimed.customer} is not waiting on ${FRUIT_META[kind].label}. Aim the glove at a ticket that wants it.`
+            : `No customer needs ${FRUIT_META[kind].label} right now.${engine.practice ? "" : ` ${Math.abs(scored.delta)} point penalty. Combo reset.`}`,
+        );
       }
     };
 
@@ -1267,7 +1311,7 @@ export function GameCanvas({
       const delta = Math.min(0.04, Math.max(0, (now - engine.lastFrame) / 1000));
       engine.lastFrame = now;
       const elapsed = (now - engine.startedAt) / 1000;
-      if (roundModeRef.current === "timed" && elapsed >= ROUND_SECONDS) {
+      if (!engine.practice && roundModeRef.current === "timed" && elapsed >= ROUND_SECONDS) {
         engine.running = false;
         juiceAudio.play("finish");
         callbackRef.current.onFinish({
@@ -1294,6 +1338,8 @@ export function GameCanvas({
       engine.items = engine.items.filter((item) => item.y < height + item.radius * 2);
 
       const frame = trackingRef.current;
+      const aim = previewAim(frame.hands, engine.orders, frame.source === "demo");
+      engine.aimedOrderId = aim.orderId;
       frame.hands.forEach((hand) => {
         const justClosed = hand.closed && !engine.previousClosed[hand.id];
         engine.previousClosed[hand.id] = hand.closed;
@@ -1303,7 +1349,7 @@ export function GameCanvas({
           .map((item) => ({ item, distance: Math.hypot(item.x * width - point.x, item.y - point.y) }))
           .filter(({ item, distance }) => distance <= item.radius + 46)
           .sort((a, b) => a.distance - b.distance)[0];
-        if (nearest) hitItem(engine, nearest.item, nearest.item.x * width, nearest.item.y, now);
+        if (nearest) hitItem(engine, nearest.item, nearest.item.x * width, nearest.item.y, now, hand.x);
         else juiceAudio.play("close");
       });
 
@@ -1410,27 +1456,37 @@ export function GameCanvas({
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
       context.clearRect(0, 0, width, height);
       const engine = engineRef.current;
-      if (phaseRef.current === "playing" && engine.running) updateEngine(engine, now);
+      if ((phaseRef.current === "playing" || phaseRef.current === "practice") && engine.running) updateEngine(engine, now);
 
       context.save();
       const shakeX = engine.shake ? Math.sin(now * 0.19) * engine.shake * 0.5 : 0;
       const shakeY = engine.shake ? Math.cos(now * 0.23) * engine.shake * 0.5 : 0;
       context.translate(shakeX, shakeY);
-      drawBackdrop(context, width, height);
+      const liveDrinks = engine.orders.filter((order) => !order.completed).map((order) => order.drink);
+      drawBackdrop(
+        context,
+        width,
+        height,
+        chalkboardLines(liveDrinks, FRESH_PRESSED_MENU),
+        chalkboardLines([], HOUSE_MIXES_MENU),
+      );
 
-      drawEffects(engine);
-      engine.items.forEach((item) => {
-        const x = item.x * width;
-        if (item.type === "fruit") drawFruit(context, item.kind as FruitKind, x, item.y, item.radius, item.rotation);
-        else drawPower(context, item.kind as PowerKind, x, item.y, item.radius, item.rotation);
-      });
+      const livePlay = phaseRef.current === "playing" || phaseRef.current === "practice";
+      if (livePlay) {
+        drawEffects(engine);
+        engine.items.forEach((item) => {
+          const x = item.x * width;
+          if (item.type === "fruit") drawFruit(context, item.kind as FruitKind, x, item.y, item.radius, item.rotation);
+          else drawPower(context, item.kind as PowerKind, x, item.y, item.radius, item.rotation);
+        });
+      }
 
       const frame = trackingRef.current;
       frame.hands.forEach((hand) => {
         const point = toWorld(hand, width, height);
         drawHand(context, point.x, point.y, hand.closed, hand.id, now);
       });
-      drawTexts(engine);
+      if (livePlay) drawTexts(engine);
 
       if (engine.freezeUntil > now) {
         context.fillStyle = "rgba(76,217,255,.055)";
