@@ -9,7 +9,7 @@ test('GLB shortlist covers every served fruit within the mobile asset budget', a
   const source = await readFile(new URL('../src/game/model.ts', import.meta.url), 'utf8');
   const kinds = JSON.parse(source.match(/export const FRUITS = (\[.*?\])/)[1]);
   assert.deepEqual(manifest.map(asset => asset.kind), kinds);
-  assert.ok(manifest.reduce((total, asset) => total + asset.bytes, 0) < 5_000_000);
+  assert.ok(manifest.reduce((total, asset) => total + asset.bytes, 0) < 1_000_000);
 });
 for (const asset of manifest) {
   test(`${asset.kind} is a valid, self-contained glTF 2.0 mesh`, async () => {
