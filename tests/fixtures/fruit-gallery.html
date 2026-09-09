@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Juicers fruit mesh review</title>
+<style>body{margin:0;background:#173d40;color:#fff0ce;font-family:system-ui}h1{margin:32px 48px 0;font-size:36px}p{margin:8px 48px 20px;color:#9bddc7}canvas{display:block;width:100%;max-width:1200px;margin:auto}</style>
+<h1>JUICERS / FRESH IN 3D</h1><p>Five original GLBs · shared cel lighting · live depth tumble</p>
+<canvas width="1200" height="530"></canvas>
+<script type="module">
+import { FruitMeshRenderer } from '/src/game/FruitMeshRenderer.ts';
+const renderer = new FruitMeshRenderer();
+await renderer.load();
+const canvas = document.querySelector('canvas');
+const ctx = canvas.getContext('2d');
+const kinds = ['orange','lime','berry','melon','pineapple'];
+const items = kinds.map((kind,id)=>({kind,id,type:'fruit',x:(id+0.5)/5,y:180,radius:85,rotation:0.35}));
+window.renderer = renderer;
+window.renderFrame = (now) => {
+  ctx.fillStyle='#173d40'; ctx.fillRect(0,0,1200,530);
+  renderer.render(items,now);
+  for (const item of items) {
+    renderer.draw(ctx,item,1200);
+    ctx.textAlign='center';ctx.font='bold 21px system-ui';ctx.fillStyle='#fff0ce';
+    ctx.fillText(item.kind.toUpperCase(),item.x*1200,335);
+  }
+  // A second row uses the minimum phone gameplay radius.
+  for (const item of items) renderer.draw(ctx,{...item,y:430,radius:30},1200);
+  ctx.font='14px system-ui';ctx.fillStyle='#9bddc7';ctx.fillText('PHONE GAMEPLAY SIZE · 30 PX HIT RADIUS',600,515);
+};
+function animate(now){window.renderFrame(now);window.frame=requestAnimationFrame(animate)}
+animate(0);
+window.ready=true;
+</script></html>

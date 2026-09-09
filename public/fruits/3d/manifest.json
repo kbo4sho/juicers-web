@@ -1,0 +1,32 @@
+[
+  {
+    "kind": "orange",
+    "bytes": 48888,
+    "triangles": 1912,
+    "materials": 4
+  },
+  {
+    "kind": "lime",
+    "bytes": 16848,
+    "triangles": 728,
+    "materials": 2
+  },
+  {
+    "kind": "berry",
+    "bytes": 124624,
+    "triangles": 5296,
+    "materials": 4
+  },
+  {
+    "kind": "melon",
+    "bytes": 96260,
+    "triangles": 2348,
+    "materials": 4
+  },
+  {
+    "kind": "pineapple",
+    "bytes": 47380,
+    "triangles": 896,
+    "materials": 4
+  }
+]

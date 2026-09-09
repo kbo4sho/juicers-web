@@ -79,3 +79,31 @@ Other scripts:
 The render loop and inference loop are separate. Landmark work is throttled, resize/input listeners are cleaned up, scored fruit is removed immediately, and expired effects are pruned every frame.
 
 MediaPipe Tasks Vision and the included model files are provided by the MediaPipe project and run entirely in the browser.
+
+## Opt-in 3D fruit (first pass)
+
+Run locally with `npm run dev`, open `http://localhost:5173/?fruit3d=1`, then choose
+**Play demo mode → Endless Counter**. The practice orange and falling ingredients
+are live 3D meshes. Camera mode uses the same flag. Remove `fruit3d=1` (or set it
+to `0`) and reload to return to the illustrated playfield. This PR does not deploy
+or change the live Pages site.
+
+The complete shortlist covers the five existing ingredients: orange, lime,
+raspberry-style berry, watermelon slice, and pineapple. UI recipe icons stay as
+the familiar illustrations. All five original, texture-free GLBs total **334,000
+bytes (326 KiB)**, with [provenance and MIT terms](public/fruits/3d/LICENSE.md).
+Regenerate them with `npm run assets:fruits`.
+
+A lazy-loaded Three.js renderer shares warm key light, mint rim light, glossy
+materials, and plum ink outlines across the set. One fixed 768×768 WebGL atlas
+renders up to 16 fruits, then composites into the existing playfield in item
+order. It shares the game's animation loop, keeps hit radii and input handling,
+respects reduced motion for mesh tumble, and disposes GPU resources on unmount.
+Loading, failed assets, unavailable WebGL, context loss, and excess atlas capacity
+use the existing illustrated fruit automatically.
+
+For review, the dev-only page `/tests/fixtures/fruit-gallery.html` shows every mesh
+at large and phone gameplay sizes. See [the review notes and stills](docs/fruit-meshes.md).
+Browser regression checks: `npx playwright install chromium` then
+`npm run test:browser`. With the dev server running, `node scripts/measure-fruits.mjs`
+prints a repeatable renderer sanity measurement.
