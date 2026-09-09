@@ -11,8 +11,10 @@ async function landPractice(page: Page) {
   // Practice always spawns at 52% x, 58% y, with a deliberately slow fall.
   const box = (await page.locator("canvas").boundingBox())!;
   await page.waitForTimeout(250);
-  await page.mouse.click(box.x + box.width * 0.52, box.y + box.height * 0.61, { delay: 80 });
+  await page.mouse.move(box.x + box.width * 0.52, box.y + box.height * 0.61);
+  await page.mouse.down();
   await expect(page.getByText("Land one squeeze to start")).toBeHidden();
+  await page.mouse.up();
   await expect(page.getByRole("button", { name: "END SESSION" })).toBeVisible({ timeout: 7000 });
 }
 
@@ -39,7 +41,7 @@ test("opt-in meshes support practice, aimed pours, results and replay", async ({
   for (let attempt = 0; attempt < 120; attempt++) {
     const target = await page.evaluate(() => {
       const cards = [...document.querySelectorAll(".order-card")];
-      const items = (window as unknown as { fruitItems?: {type:string; kind:string; x:number; y:number}[] }).fruitItems ?? [];
+      const items = (window as unknown as { fruitItems?: {id:number; type:string; kind:string; x:number; y:number}[] }).fruitItems ?? [];
       for (const item of items) {
         if (item.type !== "fruit" || item.y < 320 || item.y > innerHeight - 240) continue;
         const cardIndex = cards.findIndex(card => [...card.querySelectorAll(".order-card__ingredients > span:not(.is-filled) img")]
@@ -48,8 +50,21 @@ test("opt-in meshes support practice, aimed pours, results and replay", async ({
       }
     });
     if (target) {
-      await page.locator(".order-card__select").nth(target.cardIndex).click();
-      await page.mouse.click(target.x * 1280, target.y + 25, { delay: 70 });
+      const button = page.locator(".order-card__select").nth(target.cardIndex);
+      await button.click();
+      await expect(button).toHaveAttribute("aria-pressed", "true");
+      // Selection/actionability can take several frames on CI's software GPU.
+      // Re-observe this fruit after selecting, rather than clicking its old pose.
+      const current = await page.evaluate((id) => {
+        const items = (window as unknown as {fruitItems: {id:number;x:number;y:number}[]}).fruitItems;
+        return items.find(item => item.id === id && item.y < innerHeight - 240);
+      }, target.id);
+      if (!current) continue;
+      await page.mouse.move(current.x * 1280, current.y);
+      await page.mouse.down();
+      // Let an actual game frame consume the squeeze before reopening the fist.
+      await expect(page.locator(".score-stack strong")).not.toHaveText("0");
+      await page.mouse.up();
       break;
     }
     await page.waitForTimeout(100);

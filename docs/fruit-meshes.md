@@ -94,6 +94,9 @@ with the flag; the default path does not fetch them.
   demo fists; both tracked fists; tracked grab/movement/loss with multiple tickets;
   real local MediaPipe startup with a synthetic camera; camera denial recovery;
   shader compilation and reduced-motion stability.
+- The scoring/replay smoke also passes with SwiftShader software rendering.
+  Tests re-observe fruit after selecting and wait for squeeze processing rather
+  than depending on a fixed-duration press fitting between rendered frames.
 - Production smoke at `/juicers-web/`: all five GLBs return HTTP 200, practice
   completes, ticket selection survives a grab, and no browser/GPU errors occur.
 - Production adds a lazy renderer chunk of about **614 kB / 155 kB gzip**. Vite's
