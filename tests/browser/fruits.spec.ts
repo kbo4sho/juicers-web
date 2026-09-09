@@ -177,6 +177,9 @@ test("camera setup loads local MediaPipe beside the mesh renderer", async ({ pag
 
 
 test("only a card tap selects: holds, drags and either demo fist leave it locked", async ({ page }) => {
+  // This exercises a full practice plus many separate input gestures. Software
+  // rendering on CI can exhaust 30 s even when every assertion has passed.
+  test.setTimeout(60_000);
   await startPractice(page);
   await landPractice(page);
   const buttons = page.locator(".order-card__select");
