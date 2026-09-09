@@ -28,19 +28,8 @@ export type AimableOrder = {
   completed: boolean;
 };
 
-export type AimHand = {
-  id: "left" | "right";
-  x: number;
-  closed: boolean;
-};
-
-export type AimPreview = {
-  orderId: number | null;
-  mode: "locked" | "open";
-};
-
 export type SqueezeTarget = {
-  kind: "served" | "wrong-ticket" | "fallback" | "nobody";
+  kind: "served" | "wrong-ticket" | "nobody";
   orderId: number | null;
   aimedOrderId: number | null;
 };
@@ -106,10 +95,6 @@ export const CUSTOMER_RECIPES: Record<CustomerName, readonly string[]> = {
 
 export const FRESH_PRESSED_MENU = ["Citrus Pop", "Berry Glow", "Melon Mist"] as const;
 export const HOUSE_MIXES_MENU = ["Tropic Thunder", "Rainbow Rush", "Juicer Deluxe"] as const;
-
-/** Horizontal band matching the HTML ticket rail. Hands outside it are "aimed at nobody". */
-export const AIM_RAIL_LEFT = 0.16;
-export const AIM_RAIL_RIGHT = 0.84;
 
 export type RoundSnapshot = {
   score: number;
@@ -272,104 +257,23 @@ export function chalkboardLines(liveDrinks: readonly string[], fallback: readonl
   return lines;
 }
 
-function railCenters(count: number): number[] {
-  if (count <= 0) return [];
-  const span = AIM_RAIL_RIGHT - AIM_RAIL_LEFT;
-  return Array.from({ length: count }, (_, index) => AIM_RAIL_LEFT + ((index + 0.5) / count) * span);
-}
-
-function nearestIndex(x: number, centers: readonly number[]): number {
-  if (centers.length === 0) return -1;
-  let best = 0;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  centers.forEach((center, index) => {
-    const distance = Math.abs(x - center);
-    if (distance < bestDistance) {
-      best = index;
-      bestDistance = distance;
-    }
-  });
-  return best;
-}
-
-export function activeOrders<T extends AimableOrder>(orders: readonly T[]): T[] {
-  return orders.filter((order) => !order.completed);
-}
-
-export function resolveAimedOrder(handX: number, orders: readonly AimableOrder[]): AimPreview {
-  const open = activeOrders(orders);
-  if (open.length === 0) return { orderId: null, mode: "open" };
-  const centers = railCenters(open.length);
-  const index = nearestIndex(handX, centers);
-  return { orderId: open[index]?.id ?? null, mode: "locked" };
-}
-
-export function selectAimingHand(
-  hands: readonly AimHand[],
-  preferRight: boolean,
-): AimHand | null {
-  if (hands.length === 0) return null;
-  const squeezing = hands.filter((hand) => hand.closed);
-  if (squeezing.length === 1) return squeezing[0];
-  if (squeezing.length > 1) {
-    return preferRight
-      ? squeezing.find((hand) => hand.id === "right") ?? squeezing[0]
-      : squeezing[0];
-  }
-  if (preferRight) return hands.find((hand) => hand.id === "right") ?? hands[0];
-  return hands.reduce((closest, hand) => {
-    const closestMid = Math.abs(closest.x - 0.5);
-    const handMid = Math.abs(hand.x - 0.5);
-    return handMid < closestMid ? hand : closest;
-  });
+// Selection is an explicit UI action. Hand coordinates and closed state never
+// enter this contract. Only order lifecycle can advance an unavailable ticket.
+export function resolveSelectedOrder(selectedId: number | null, orders: readonly AimableOrder[]): number | null {
+  const open = orders.filter((order) => !order.completed);
+  return open.find((order) => order.id === selectedId)?.id ?? open[0]?.id ?? null;
 }
 
 export function resolveSqueezeTarget(
-  handX: number,
+  selectedId: number | null,
   kind: FruitKind,
   orders: readonly AimableOrder[],
 ): SqueezeTarget {
-  const open = activeOrders(orders);
-  const aimed = resolveAimedOrder(handX, open);
-
-  if (aimed.orderId === null) {
-    return { kind: "nobody", orderId: null, aimedOrderId: null };
-  }
-
-  const ticket = open.find((order) => order.id === aimed.orderId) ?? null;
-  if (ticket && orderWantsFruit(ticket, kind)) {
-    return { kind: "served", orderId: ticket.id, aimedOrderId: ticket.id };
-  }
-  if (ticket) {
-    return { kind: "wrong-ticket", orderId: ticket.id, aimedOrderId: ticket.id };
-  }
-
-  const matching = open.filter((order) => orderWantsFruit(order, kind));
-  if (matching.length === 0) {
-    return { kind: "nobody", orderId: null, aimedOrderId: aimed.orderId };
-  }
-  const centers = railCenters(open.length);
-  const fallback = [...matching].sort((left, right) => {
-    const leftIndex = open.findIndex((order) => order.id === left.id);
-    const rightIndex = open.findIndex((order) => order.id === right.id);
-    return Math.abs(handX - (centers[leftIndex] ?? 0.5)) - Math.abs(handX - (centers[rightIndex] ?? 0.5));
-  })[0];
-  return { kind: "fallback", orderId: fallback.id, aimedOrderId: fallback.id };
-}
-
-export function previewAim(
-  hands: readonly AimHand[],
-  orders: readonly AimableOrder[],
-  preferRight: boolean,
-  fruitKind?: FruitKind,
-): AimPreview {
-  const hand = selectAimingHand(hands, preferRight);
-  if (!hand) return { orderId: null, mode: "open" };
-  if (fruitKind) {
-    const target = resolveSqueezeTarget(hand.x, fruitKind, orders);
-    if (target.orderId !== null) {
-      return { orderId: target.orderId, mode: target.kind === "nobody" ? "open" : "locked" };
-    }
-  }
-  return resolveAimedOrder(hand.x, orders);
+  const ticket = orders.find((order) => order.id === selectedId && !order.completed);
+  if (!ticket) return { kind: "nobody", orderId: null, aimedOrderId: selectedId };
+  return {
+    kind: orderWantsFruit(ticket, kind) ? "served" : "wrong-ticket",
+    orderId: ticket.id,
+    aimedOrderId: ticket.id,
+  };
 }

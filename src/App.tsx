@@ -71,7 +71,11 @@ function prefersReducedMotion() {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-function CustomerOrderCard({ order, index, aimed }: { order: CustomerOrderSnapshot; index: number; aimed: boolean }) {
+function CustomerOrderCard({ order, index, aimed, onSelect }: {
+  order: CustomerOrderSnapshot; index: number; aimed: boolean; onSelect: () => void;
+}) {
+  const press = useRef<{ id: number; x: number; y: number; at: number; moved: boolean } | null>(null);
+  const allowClick = useRef(false);
   const filledCount = order.filled.filter(Boolean).length;
   const progress = filledCount / order.ingredients.length;
   const customer = CUSTOMER_UI[order.customer] ?? CUSTOMER_UI.Maya;
@@ -82,6 +86,37 @@ function CustomerOrderCard({ order, index, aimed }: { order: CustomerOrderSnapsh
       aria-current={aimed && !order.completed ? "true" : undefined}
       aria-label={`${order.customer}'s ${order.drink}: ${filledCount} of ${order.ingredients.length} fruits added${order.completed ? ", complete" : aimed ? ", currently serving" : ""}`}
     >
+      <button
+        type="button"
+        className="order-card__select"
+        aria-label={`Serve ${order.customer}'s ${order.drink}`}
+        aria-pressed={aimed && !order.completed}
+        disabled={order.completed}
+        onPointerDown={(event) => {
+          allowClick.current = false;
+          press.current = event.isPrimary && event.button === 0
+            ? { id: event.pointerId, x: event.clientX, y: event.clientY, at: event.timeStamp, moved: false }
+            : null;
+        }}
+        onPointerMove={(event) => {
+          const start = press.current;
+          if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 10) start.moved = true;
+        }}
+        onPointerUp={(event) => {
+          const start = press.current;
+          allowClick.current = Boolean(start && start.id === event.pointerId && !start.moved
+            && event.timeStamp - start.at <= 350
+            && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 10);
+          press.current = null;
+        }}
+        onPointerCancel={() => { press.current = null; allowClick.current = false; }}
+        onClick={(event) => {
+          // Native click follows pointerup even after a hold. Accept only a short
+          // stationary tap, or the button's native keyboard/assistive activation.
+          if (event.detail === 0 || allowClick.current) onSelect();
+          allowClick.current = false;
+        }}
+      />
       {aimed && !order.completed && (
         <div className="order-card__aim" aria-hidden="true">
           <small>NOW</small>
@@ -176,6 +211,7 @@ export function App() {
   const [handTrackingStatus, setHandTrackingStatus] = useState<HandTrackingStatus>("waiting");
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackingRef = useRef<TrackingFrame>(makeDemoFrame());
+  const selectOrderRef = useRef<number | null>(null);
   const trackingCleanupRef = useRef<null | (() => void)>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const handsMissingSinceRef = useRef<number | null>(null);
@@ -482,6 +518,7 @@ export function App() {
           countdown={countdown}
           trackingRef={trackingRef}
           cameraActive={cameraActive}
+          selectOrderRef={selectOrderRef}
           onSnapshot={setSnapshot}
           onFinish={handleFinish}
           onAnnounce={setAnnouncement}
@@ -634,7 +671,7 @@ export function App() {
               <div><span>MAYA SAYS</span><h1 id="tutorial-title">Three moves. Two ways to pour.</h1></div>
             </div>
             <div className="tutorial-steps">
-              <article><span className="step-number">01</span><FruitDot kind="lime" /><div><strong>Aim a ticket</strong><p>Move a glove over a customer, then squeeze a fruit they still need. The highlighted ticket is the only one that gets the pour.</p></div></article>
+              <article><span className="step-number">01</span><FruitDot kind="lime" /><div><strong>Aim a ticket</strong><p>Tap a customer’s ticket, then squeeze a fruit they still need. The highlighted ticket is the only one that gets the pour.</p></div></article>
               <article><span className="step-number">02</span><span className="hand-diagram" aria-hidden="true">✦</span><div><strong>Overlap + squeeze</strong><p>{mode === "camera" ? "Move either hand onto it, then close your fist." : "Move with mouse or keys, then click or press Space."}</p></div></article>
               <article><span className="step-number">03</span><span className="combo-diagram" aria-hidden="true">8×</span><div><strong>Call “order up!”</strong><p>Finish recipes for big bonuses. Regulars want different drinks — Theo keeps it small, Dax goes huge.</p></div></article>
             </div>
@@ -687,6 +724,7 @@ export function App() {
                 order={order}
                 index={index}
                 aimed={snapshot.aimedOrderId === order.id}
+                onSelect={() => { selectOrderRef.current = order.id; }}
                 key={order.id}
               />
             ))}
@@ -718,8 +756,8 @@ export function App() {
             {screen === "practice"
               ? (mode === "camera" ? "PRACTICE · OVERLAP FRUIT · CLOSE FIST" : "PRACTICE · MOVE ONTO THE FRUIT · SQUEEZE")
               : mode === "camera"
-                ? "AIM A TICKET · OVERLAP FRUIT · CLOSE FIST"
-                : "AIM WITH THE GLOVE  ·  SQUEEZE: CLICK / SPACE"}
+                ? "TAP A TICKET · OVERLAP FRUIT · CLOSE FIST"
+                : "TAP A TICKET  ·  SQUEEZE FRUIT: CLICK / SPACE"}
           </div>
         </>
       )}

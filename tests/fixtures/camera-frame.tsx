@@ -13,11 +13,13 @@ const trackingRef: { current: TrackingFrame } = {
     ],
   },
 };
-Object.assign(window, { trackingRef });
+const selectOrderRef = { current: null as number | null };
+const playing = new URLSearchParams(location.search).has("playing");
+Object.assign(window, { trackingRef, selectOrderRef });
 createRoot(document.getElementById("root")!).render(
-  <GameCanvas phase="practice" playToken={1} roundNumber={1} roundMode="endless" countdown={0}
-    trackingRef={trackingRef} cameraActive={true}
-    onSnapshot={(snapshot) => { document.body.dataset.filled = String(snapshot.orders[0]?.filled.filter(Boolean).length ?? 0); }}
+  <GameCanvas phase={playing ? "playing" : "practice"} playToken={1} roundNumber={1} roundMode="endless" countdown={0}
+    trackingRef={trackingRef} cameraActive={true} selectOrderRef={selectOrderRef}
+    onSnapshot={(snapshot) => { Object.assign(window, { snapshot }); document.body.dataset.selected = String(snapshot.aimedOrderId); document.body.dataset.filled = String(snapshot.orders[0]?.filled.filter(Boolean).length ?? 0); }}
     onFinish={() => {}} onAnnounce={() => {}}
     onPracticeComplete={() => { document.body.dataset.practice = "complete"; }} />,
 );
