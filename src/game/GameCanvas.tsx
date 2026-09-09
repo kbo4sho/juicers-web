@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { juiceAudio } from "./audio";
+import type { FruitMeshRenderer } from "./FruitMeshRenderer";
 import {
   chalkboardLines,
   createCustomerOrder,
@@ -1111,6 +1112,23 @@ export function GameCanvas({
     let width = 1;
     let height = 1;
     let dpr = 1;
+    let fruitMeshes: FruitMeshRenderer | undefined;
+    let disposed = false;
+    // Import the GPU renderer only for the opt-in; the default path stays lightweight.
+    if (new URLSearchParams(window.location.search).get("fruit3d") === "1") {
+      canvas.dataset.fruitRenderer = "loading";
+      void import("./FruitMeshRenderer").then(async ({ FruitMeshRenderer }) => {
+        if (disposed) return;
+        fruitMeshes = new FruitMeshRenderer();
+        await fruitMeshes.load();
+        if (!disposed) canvas.dataset.fruitRenderer = fruitMeshes.status;
+      }).catch((error) => {
+        if (!disposed) canvas.dataset.fruitRenderer = "fallback";
+        console.warn("Using illustrated fruit fallback.", error);
+      });
+    } else {
+      canvas.dataset.fruitRenderer = "illustrated";
+    }
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
@@ -1481,9 +1499,13 @@ export function GameCanvas({
       const livePlay = phaseRef.current === "playing" || phaseRef.current === "practice";
       if (livePlay) {
         drawEffects(engine);
+        fruitMeshes?.render(engine.items, now);
+        if (fruitMeshes) canvas.dataset.fruitRenderer = fruitMeshes.status;
         engine.items.forEach((item) => {
           const x = item.x * width;
-          if (item.type === "fruit") drawFruit(context, item.kind as FruitKind, x, item.y, item.radius, item.rotation);
+          if (item.type === "fruit") {
+            if (!fruitMeshes?.draw(context, item, width)) drawFruit(context, item.kind as FruitKind, x, item.y, item.radius, item.rotation);
+          }
           else drawPower(context, item.kind as PowerKind, x, item.y, item.radius, item.rotation);
         });
       }
@@ -1529,6 +1551,8 @@ export function GameCanvas({
 
     animationFrame = requestAnimationFrame(render);
     return () => {
+      disposed = true;
+      fruitMeshes?.dispose();
       cancelAnimationFrame(animationFrame);
       observer.disconnect();
     };

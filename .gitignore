@@ -9,3 +9,5 @@ GAUNTLET_PROGRESS.md
 .env*
 !.env.example
 *.tsbuildinfo
+test-results/
+playwright-report/
