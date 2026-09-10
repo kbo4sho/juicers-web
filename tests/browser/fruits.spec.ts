@@ -11,8 +11,10 @@ async function landPractice(page: Page) {
   // Practice always spawns at 52% x, 58% y, with a deliberately slow fall.
   const box = (await page.locator("canvas").boundingBox())!;
   await page.waitForTimeout(250);
-  await page.mouse.click(box.x + box.width * 0.52, box.y + box.height * 0.61, { delay: 80 });
+  await page.mouse.move(box.x + box.width * 0.52, box.y + box.height * 0.61);
+  await page.mouse.down();
   await expect(page.getByText("Land one squeeze to start")).toBeHidden();
+  await page.mouse.up();
   await expect(page.getByRole("button", { name: "END SESSION" })).toBeVisible({ timeout: 7000 });
 }
 
@@ -35,20 +37,34 @@ test("opt-in meshes support practice, aimed pours, results and replay", async ({
       return render.call(this, items, now);
     };
   });
-  // Follow the first needed fruit inside the matching ticket's horizontal aim zone.
+  // Select the receiving ticket explicitly, then catch its fruit anywhere.
   for (let attempt = 0; attempt < 120; attempt++) {
     const target = await page.evaluate(() => {
       const cards = [...document.querySelectorAll(".order-card")];
-      const items = (window as unknown as { fruitItems?: {type:string; kind:string; x:number; y:number}[] }).fruitItems ?? [];
-      return items.find(item => {
-        if (item.type !== "fruit" || item.y < 320 || item.y > innerHeight - 100) return false;
-        const card = cards[Math.max(0, Math.min(cards.length - 1, Math.floor((item.x - 0.16) / 0.68 * cards.length)))];
-        return card && [...card.querySelectorAll(".order-card__ingredients > span:not(.is-filled) img")]
-          .some(img => img.getAttribute("src")?.endsWith(`/${item.kind}.webp`));
-      });
+      const items = (window as unknown as { fruitItems?: {id:number; type:string; kind:string; x:number; y:number}[] }).fruitItems ?? [];
+      for (const item of items) {
+        if (item.type !== "fruit" || item.y < 320 || item.y > innerHeight - 240) continue;
+        const cardIndex = cards.findIndex(card => [...card.querySelectorAll(".order-card__ingredients > span:not(.is-filled) img")]
+          .some(img => img.getAttribute("src")?.endsWith(`/${item.kind}.webp`)));
+        if (cardIndex >= 0) return { ...item, cardIndex };
+      }
     });
     if (target) {
-      await page.mouse.click(target.x * 1280, target.y, { delay: 70 });
+      const button = page.locator(".order-card__select").nth(target.cardIndex);
+      await button.click();
+      await expect(button).toHaveAttribute("aria-pressed", "true");
+      // Selection/actionability can take several frames on CI's software GPU.
+      // Re-observe this fruit after selecting, rather than clicking its old pose.
+      const current = await page.evaluate((id) => {
+        const items = (window as unknown as {fruitItems: {id:number;x:number;y:number}[]}).fruitItems;
+        return items.find(item => item.id === id && item.y < innerHeight - 240);
+      }, target.id);
+      if (!current) continue;
+      await page.mouse.move(current.x * 1280, current.y);
+      await page.mouse.down();
+      // Let an actual game frame consume the squeeze before reopening the fist.
+      await expect(page.locator(".score-stack strong")).not.toHaveText("0");
+      await page.mouse.up();
       break;
     }
     await page.waitForTimeout(100);
@@ -157,4 +173,111 @@ test("camera setup loads local MediaPipe beside the mesh renderer", async ({ pag
   await expect(page.getByText("CAMERA ON · VIDEO HIDDEN")).toBeVisible();
   await expect(page.locator("video")).toHaveCSS("opacity", "0");
   await expect(page.locator("video")).toHaveAttribute("aria-hidden", "true");
+});
+
+
+test("only a card tap selects: holds, drags and either demo fist leave it locked", async ({ page }) => {
+  // This exercises a full practice plus many separate input gestures. Software
+  // rendering on CI can exhaust 30 s even when every assertion has passed.
+  test.setTimeout(60_000);
+  await startPractice(page);
+  await landPractice(page);
+  const buttons = page.locator(".order-card__select");
+  await buttons.nth(1).click();
+  await expect(buttons.nth(1)).toHaveAttribute("aria-pressed", "true");
+  const box = (await buttons.nth(2).boundingBox())!;
+  const x = box.x + box.width / 2, y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.waitForTimeout(450);
+  await page.mouse.up();
+  await expect(buttons.nth(1)).toHaveAttribute("aria-pressed", "true");
+  await page.mouse.move(x - 20, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 20, y);
+  await page.mouse.up();
+  await expect(buttons.nth(1)).toHaveAttribute("aria-pressed", "true");
+  // Both gloves can close in unrelated aim columns without retargeting.
+  await page.mouse.move(100, 330);
+  await expect(page.locator("canvas")).toBeFocused();
+  for (const key of ["z", "m", "Space"]) {
+    await page.keyboard.down(key);
+    await page.waitForTimeout(100);
+    await page.keyboard.up(key);
+    await expect(buttons.nth(1)).toHaveAttribute("aria-pressed", "true");
+  }
+  await page.mouse.down();
+  await page.mouse.move(x, y);
+  await page.mouse.up();
+  await expect(buttons.nth(1)).toHaveAttribute("aria-pressed", "true");
+  await buttons.nth(2).click();
+  await expect(buttons.nth(2)).toHaveAttribute("aria-pressed", "true");
+  await buttons.nth(0).focus();
+  await page.keyboard.press("Space");
+  await expect(buttons.nth(0)).toHaveAttribute("aria-pressed", "true");
+  await buttons.nth(2).focus();
+  await page.keyboard.press("Enter");
+  await expect(buttons.nth(2)).toHaveAttribute("aria-pressed", "true");
+});
+
+test("phone taps select tickets, canceled touches do not", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  const page = await context.newPage();
+  await startPractice(page);
+  await landPractice(page);
+  const buttons = page.locator(".order-card__select");
+  await buttons.nth(1).tap();
+  await expect(buttons.nth(1)).toHaveAttribute("aria-pressed", "true");
+  await buttons.nth(0).dispatchEvent("pointerdown", { pointerId: 2, isPrimary: true, button: 0 });
+  await buttons.nth(0).dispatchEvent("pointercancel", { pointerId: 2 });
+  await buttons.nth(0).dispatchEvent("click", { detail: 1 });
+  await expect(buttons.nth(1)).toHaveAttribute("aria-pressed", "true");
+  await buttons.nth(2).scrollIntoViewIfNeeded();
+  await buttons.nth(2).tap();
+  await expect(buttons.nth(2)).toHaveAttribute("aria-pressed", "true");
+  await context.close();
+});
+
+test("juicy shader draws all five fruits without GPU errors and honors reduced motion", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  page.on("pageerror", error => errors.push(error.message));
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/tests/fixtures/fruit-gallery.html");
+  await page.waitForFunction(() => (window as unknown as {ready:boolean}).ready);
+  const stills = await page.evaluate(() => {
+    const state = window as unknown as { frame: number; renderFrame: (now:number)=>void };
+    cancelAnimationFrame(state.frame);
+    state.renderFrame(1000);
+    const canvas = document.querySelector("canvas")!;
+    const first = canvas.toDataURL();
+    state.renderFrame(4000);
+    return { first, second: canvas.toDataURL() };
+  });
+  expect(stills.first).toEqual(stills.second);
+  expect(errors).toEqual([]);
+  await page.screenshot({ path: "test-results/fruit-mesh-lineup.png" });
+});
+
+
+test("tracked grabs, movement and tracking loss never select a different card", async ({ page }) => {
+  await page.goto("/tests/fixtures/camera-frame.html?fruit3d=1&playing=1");
+  await expect(page.locator("body")).toHaveAttribute("data-selected", "1");
+  await page.evaluate(() => {
+    (window as unknown as {selectOrderRef:{current:number}}).selectOrderRef.current = 2;
+  });
+  await expect(page.locator("body")).toHaveAttribute("data-selected", "2");
+  for (const closed of [[true, false], [false, true], [true, true], [false, false]]) {
+    await page.evaluate((closed) => {
+      const ref = (window as unknown as {trackingRef:{current:{hands: {x:number;closed:boolean}[]}}}).trackingRef;
+      ref.current.hands.forEach((hand, i) => { hand.x = i ? 0.05 : 0.95; hand.closed = closed[i]; });
+    }, closed);
+    await page.waitForTimeout(120);
+    await expect(page.locator("body")).toHaveAttribute("data-selected", "2");
+  }
+  await page.evaluate(() => {
+    (window as unknown as {trackingRef:{current:{hands:unknown[]}}}).trackingRef.current.hands = [];
+  });
+  await page.waitForTimeout(120);
+  await expect(page.locator("body")).toHaveAttribute("data-selected", "2");
 });

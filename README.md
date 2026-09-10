@@ -1,6 +1,6 @@
 # Juicers
 
-Juicers is a polished, one-minute browser arcade game. Customer tickets arrive with colorful multi-fruit recipes; players aim either glove at a specific ticket, overlap a fruit that customer still needs, and squeeze. The highlighted ticket is the only one that receives the pour — a matching fruit never silently dumps into another order. Finished drinks earn big bonuses, leave the rail with an “ORDER UP!” celebration, and make room for the next customer.
+Juicers is a polished, one-minute browser arcade game. Customer tickets arrive with colorful multi-fruit recipes; players tap a ticket to select its customer, overlap a fruit that customer still needs with either glove, and squeeze. The highlighted ticket is the only one that receives the pour — a matching fruit never silently dumps into another order. Finished drinks earn big bonuses, leave the rail with an “ORDER UP!” celebration, and make room for the next customer.
 
 The game is staged as a neighborhood diner–juice bar, with a six-person cast of original cartoon regulars. Each regular orders differently: Maya wants bright two-fruit citrus, Theo sits with a small no-rush cup, Pip sings for three-fruit berry mixes, Mina stays tart, Zara asks for weird house experiments, and Dax always wants a four-fruit monster. Portraits, names, and short lines carry from the welcome screen through live order tickets and the results screen. The face-free fruit and finished-drink illustrations share the cast's inked cel-animation treatment. Optimized WebP assets live in `public/portraits/`, `public/fruits/`, and `public/drinks/`.
 
@@ -17,17 +17,20 @@ Use current desktop Chrome or Edge over `https://` (or `localhost`).
 1. Choose **Play with camera** and approve browser camera access.
 2. Step back until both hands fit comfortably in frame.
 3. The webcam feed stays hidden; the two cartoon gloves show exactly what the game detects.
-4. Watch the customer tickets. The highlighted ticket is who you are aiming at.
+4. Tap/click a customer ticket to select it. The highlighted ticket receives both hands’ pours; grabbing or moving your hands never switches it.
 5. Overlap a falling fruit with either cartoon glove, then close and reopen your fist. The glove nametag flips from READY to POUR.
 6. After you pick a shift, land one untimed practice squeeze before the countdown.
 
 ### Demo mode
 
-Demo mode is the complete game without camera access. It uses the same serve-aiming rule, customer queue, scoring, difficulty ramp, powerups, results, and replay loop.
+Demo mode is the complete game without camera access. It uses the same ticket-selection rule, customer queue, scoring, difficulty ramp, powerups, results, and replay loop.
 
-- Mouse: move the right hand; click to squeeze.
+- Tap/click a ticket to select it (or Tab to its button and use Enter/Space). Swipe the ticket rail on phones to reach every customer.
+- Mouse: move the right hand; click the playfield to squeeze.
 - Arrow keys: move the right hand; `M` or `Space` to squeeze.
 - `W A S D`: move the left hand; `Z` to squeeze.
+
+A card hold, drag, or canceled touch does not select it. The first open ticket is selected at round start and after the selected order completes.
 
 The squeeze is edge-triggered: reopen before squeezing again. The playfield is keyboard-focusable and outcome text is announced through an ARIA live region. Reduced-motion preferences are honored by the interface.
 
@@ -80,7 +83,7 @@ The render loop and inference loop are separate. Landmark work is throttled, res
 
 MediaPipe Tasks Vision and the included model files are provided by the MediaPipe project and run entirely in the browser.
 
-## Opt-in 3D fruit (first pass)
+## Opt-in 3D fruit (second pass)
 
 Run locally with `npm run dev`, open `http://localhost:5173/?fruit3d=1`, then choose
 **Play demo mode → Endless Counter**. The practice orange and falling ingredients
@@ -90,15 +93,17 @@ or change the live Pages site.
 
 The complete shortlist covers the five existing ingredients: orange, lime,
 raspberry-style berry, watermelon slice, and pineapple. UI recipe icons stay as
-the familiar illustrations. All five original, texture-free GLBs total **334,000
-bytes (326 KiB)**, with [provenance and MIT terms](public/fruits/3d/LICENSE.md).
+the familiar illustrations. All five original, texture-free GLBs total **613,336
+bytes (599 KiB)**, with [provenance and MIT terms](public/fruits/3d/LICENSE.md).
 Regenerate them with `npm run assets:fruits`.
 
-A lazy-loaded Three.js renderer shares warm key light, mint rim light, glossy
-materials, and plum ink outlines across the set. One fixed 768×768 WebGL atlas
+A lazy-loaded Three.js renderer shares saturated flesh colors, cream glaze
+reflections, mint edge lighting, and plum ink outlines across the set. Cut lime
+segments, pillowy leaves, and rounded pineapple scales keep the set playful.
+One fixed 640×640 WebGL atlas
 renders up to 16 fruits, then composites into the existing playfield in item
-order. It shares the game's animation loop, keeps hit radii and input handling,
-respects reduced motion for mesh tumble, and disposes GPU resources on unmount.
+order. It shares the game's animation loop, keeps hit radii,
+respects reduced motion for mesh tumble and gentle squash, and disposes GPU resources on unmount.
 Loading, failed assets, unavailable WebGL, context loss, and excess atlas capacity
 use the existing illustrated fruit automatically.
 

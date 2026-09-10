@@ -2,6 +2,10 @@
 
 These five GLB meshes were authored procedurally for `kbo4sho/juicers-web` on
 2026-09-08 with Codex, using the original source in `scripts/generate-fruits.mjs`.
+The 2026-09-09 second pass adds cut-lime segments and pulp, rounded pineapple
+scales, curved leaves, plumper berry lobes, softer melon bevels, and new colors.
+The matching texture-free glaze shader in `src/game/FruitMeshRenderer.ts` is also
+original work for this project. These revisions use the same MIT terms below.
 No downloaded models, scans, textures, marketplace assets, or image-to-3D services
 were used. Shapes and colors were designed to match this game's five ingredient
 kinds: orange, lime, berry (raspberry), melon (watermelon slice), and pineapple.

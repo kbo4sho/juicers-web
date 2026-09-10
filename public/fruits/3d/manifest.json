@@ -1,32 +1,32 @@
 [
   {
     "kind": "orange",
-    "bytes": 48888,
-    "triangles": 1912,
-    "materials": 4
+    "bytes": 20284,
+    "triangles": 652,
+    "materials": 3
   },
   {
     "kind": "lime",
-    "bytes": 16848,
-    "triangles": 728,
-    "materials": 2
+    "bytes": 114036,
+    "triangles": 2988,
+    "materials": 5
   },
   {
     "kind": "berry",
-    "bytes": 124624,
-    "triangles": 5296,
+    "bytes": 133640,
+    "triangles": 5716,
     "materials": 4
   },
   {
     "kind": "melon",
-    "bytes": 96260,
-    "triangles": 2348,
+    "bytes": 93432,
+    "triangles": 2744,
     "materials": 4
   },
   {
     "kind": "pineapple",
-    "bytes": 47380,
-    "triangles": 896,
+    "bytes": 251944,
+    "triangles": 3728,
     "materials": 4
   }
 ]

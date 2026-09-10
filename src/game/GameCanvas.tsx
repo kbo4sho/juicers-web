@@ -11,7 +11,7 @@ import {
   FRUITS,
   HOUSE_MIXES_MENU,
   personaByName,
-  previewAim,
+  resolveSelectedOrder,
   rankForScore,
   resolveSqueezeTarget,
   scoreJuice,
@@ -34,6 +34,7 @@ type Props = {
   countdown: number;
   trackingRef: React.RefObject<TrackingFrame>;
   cameraActive: boolean;
+  selectOrderRef?: React.RefObject<number | null>;
   onSnapshot: (snapshot: RoundSnapshot) => void;
   onFinish: (result: RoundResult) => void;
   onAnnounce: (message: string) => void;
@@ -992,6 +993,7 @@ export function GameCanvas({
   countdown,
   trackingRef,
   cameraActive,
+  selectOrderRef,
   onSnapshot,
   onFinish,
   onAnnounce,
@@ -1026,9 +1028,11 @@ export function GameCanvas({
     engine.lastFrame = now;
     engine.nextSpawnAt = now + (phase === "practice" ? 180 : 360);
     refreshOrders(engine, now, 0);
+    engine.aimedOrderId = resolveSelectedOrder(null, engine.orders);
+    if (selectOrderRef) selectOrderRef.current = null;
     engineRef.current = engine;
     onSnapshot(snapshot(engine, now, roundMode));
-  }, [phase, playToken, roundMode, roundNumber, onSnapshot]);
+  }, [phase, playToken, roundMode, roundNumber, onSnapshot, selectOrderRef]);
 
   const updateDemoPoint = useCallback(
     (id: "left" | "right", x: number, y: number, closed?: boolean) => {
@@ -1052,6 +1056,8 @@ export function GameCanvas({
       if (hand) updateDemoPoint(id, hand.x + dx, hand.y + dy);
     };
     const keyDown = (event: KeyboardEvent) => {
+      // Space/Enter on a ticket button belong to selection, never to a fist.
+      if (event.target instanceof Element && event.target.closest("button, a, input, textarea, select, [contenteditable=true]")) return;
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(event.key)) event.preventDefault();
       pressed.add(event.code);
       if (event.code === "KeyZ") updateDemoPoint("left", trackingRef.current.hands[0]?.x ?? 0.32, trackingRef.current.hands[0]?.y ?? 0.68, true);
@@ -1097,6 +1103,11 @@ export function GameCanvas({
   const pointerPosition = useCallback(
     (event: React.PointerEvent<HTMLCanvasElement>) => {
       if (cameraActive) return;
+      // Moving back into play hands keyboard control back to the glove after a
+      // ticket click; focused ticket buttons retain native Space/Enter selection.
+      if (event.pointerType === "mouse" && document.activeElement !== event.currentTarget) {
+        event.currentTarget.focus({ preventScroll: true });
+      }
       const rect = event.currentTarget.getBoundingClientRect();
       updateDemoPoint("right", (event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
     },
@@ -1198,7 +1209,7 @@ export function GameCanvas({
       if (!engine.practice && progress > 0.5 && engine.random() < 0.18) engine.nextSpawnAt -= interval * 0.45;
     };
 
-    const hitItem = (engine: Engine, item: FallingItem, x: number, y: number, now: number, handX: number) => {
+    const hitItem = (engine: Engine, item: FallingItem, x: number, y: number, now: number) => {
       engine.items = engine.items.filter((candidate) => candidate.id !== item.id);
       if (item.type === "power") {
         const kind = item.kind as PowerKind;
@@ -1225,12 +1236,12 @@ export function GameCanvas({
 
       const kind = item.kind as FruitKind;
       const frenzy = engine.frenzyUntil > now;
-      const target = resolveSqueezeTarget(handX, kind, engine.orders);
+      const target = resolveSqueezeTarget(engine.aimedOrderId, kind, engine.orders);
       const matchingOrder = target.orderId === null
         ? undefined
         : engine.orders.find((order) => order.id === target.orderId);
       const ingredientIndex = matchingOrder?.ingredients.findIndex((ingredient, index) => ingredient === kind && !matchingOrder.filled[index]) ?? -1;
-      const correct = (target.kind === "served" || target.kind === "fallback") && Boolean(matchingOrder && ingredientIndex >= 0);
+      const correct = target.kind === "served" && Boolean(matchingOrder && ingredientIndex >= 0);
       const scored = engine.practice
         ? { score: engine.score, combo: engine.combo, delta: 0 }
         : scoreJuice(engine.score, engine.combo, correct, frenzy);
@@ -1325,7 +1336,7 @@ export function GameCanvas({
         juiceAudio.play("wrong");
         callbackRef.current.onAnnounce(
           target.kind === "wrong-ticket" && aimed
-            ? `${aimed.customer} is not waiting on ${FRUIT_META[kind].label}. Aim the glove at a ticket that wants it.`
+            ? `${aimed.customer} is not waiting on ${FRUIT_META[kind].label}. Tap a ticket that wants it.`
             : `No customer needs ${FRUIT_META[kind].label} right now.${engine.practice ? "" : ` ${Math.abs(scored.delta)} point penalty. Combo reset.`}`,
         );
       }
@@ -1363,8 +1374,12 @@ export function GameCanvas({
 
       const frame = trackingRef.current;
       const previousAim = engine.aimedOrderId;
-      const aim = previewAim(frame.hands, engine.orders, frame.source === "demo");
-      engine.aimedOrderId = aim.orderId;
+      const requested = selectOrderRef?.current ?? null;
+      if (selectOrderRef) selectOrderRef.current = null;
+      if (requested !== null && engine.orders.some((order) => order.id === requested && !order.completed)) {
+        engine.aimedOrderId = requested;
+      }
+      engine.aimedOrderId = resolveSelectedOrder(engine.aimedOrderId, engine.orders);
       frame.hands.forEach((hand) => {
         const justClosed = hand.closed && !engine.previousClosed[hand.id];
         engine.previousClosed[hand.id] = hand.closed;
@@ -1374,7 +1389,7 @@ export function GameCanvas({
           .map((item) => ({ item, distance: Math.hypot(item.x * width - point.x, item.y - point.y) }))
           .filter(({ item, distance }) => distance <= item.radius + 46)
           .sort((a, b) => a.distance - b.distance)[0];
-        if (nearest) hitItem(engine, nearest.item, nearest.item.x * width, nearest.item.y, now, hand.x);
+        if (nearest) hitItem(engine, nearest.item, nearest.item.x * width, nearest.item.y, now);
         else juiceAudio.play("close");
       });
 
@@ -1556,7 +1571,7 @@ export function GameCanvas({
       cancelAnimationFrame(animationFrame);
       observer.disconnect();
     };
-  }, [cameraActive, trackingRef]);
+  }, [cameraActive, trackingRef, selectOrderRef]);
 
   return (
     <canvas
@@ -1570,7 +1585,8 @@ export function GameCanvas({
       }
       onPointerMove={pointerPosition}
       onPointerDown={(event) => {
-        if (cameraActive) return;
+        if (cameraActive || event.button !== 0) return;
+        event.currentTarget.focus({ preventScroll: true });
         event.currentTarget.setPointerCapture(event.pointerId);
         pointerPosition(event);
         const hand = trackingRef.current.hands.find((candidate) => candidate.id === "right");

@@ -1,6 +1,6 @@
 import {
-  BackSide, BufferGeometry, DirectionalLight, Group, HemisphereLight,
-  Material, Mesh, MeshStandardMaterial, MeshPhongMaterial, OrthographicCamera,
+  BackSide, BufferGeometry, Color, Group,
+  Material, Mesh, MeshStandardMaterial, OrthographicCamera,
   Scene, ShaderMaterial, WebGLRenderer,
 } from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
@@ -20,8 +20,47 @@ export type FruitMeshItem = {
 // No second input surface, game clock, collision system, or per-fruit WebGL context.
 const COLUMNS = 4;
 const CAPACITY = 16;
-const TILE = 192;
+// 160 px tiles cover gameplay fruit sizes without a phone-sized framebuffer tax.
+const TILE = 160;
 const CELL = 3.4;
+
+// Texture-free diner glaze: soft color bands, a broad cream reflection and a
+// small wet glint. View-space lighting stays readable while each fruit tumbles.
+// One shader across the set, with quieter leaves/seeds; no physical clearcoat,
+// environment maps, shadow maps or extra highlight draw calls on phone GPUs.
+function juicyMaterial(color: Color, garnish: boolean) {
+  return new ShaderMaterial({
+    uniforms: { fruitColor: { value: color.clone() }, gloss: { value: garnish ? 0.22 : 1 } },
+    vertexShader: `
+      varying vec3 fruitNormal;
+      void main() {
+        fruitNormal = normalize(normalMatrix * normal);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform vec3 fruitColor;
+      uniform float gloss;
+      varying vec3 fruitNormal;
+      void main() {
+        vec3 n = normalize(fruitNormal);
+        float light = dot(n, normalize(vec3(-0.55, 0.75, 1.0)));
+        float band = smoothstep(-0.45, 0.65, light);
+        vec3 shade = mix(vec3(0.62, 0.34, 0.52), vec3(1.12, 1.04, 0.94), band);
+        vec3 color = fruitColor * shade;
+        float rim = pow(1.0 - max(n.z, 0.0), 3.0) * smoothstep(-0.2, 0.9, n.x);
+        color = mix(color, vec3(0.55, 1.0, 0.72), rim * 0.28);
+        // Elongated softbox reflection instead of a tiny plastic-looking point light.
+        vec2 reflection = (n.xy - vec2(-0.38, 0.43)) * vec2(1.0, 0.62);
+        float sheen = 1.0 - smoothstep(0.09, 0.22, length(reflection));
+        float glint = 1.0 - smoothstep(0.025, 0.085, length(n.xy - vec2(-0.12, 0.62)));
+        float front = smoothstep(0.25, 0.7, n.z);
+        color = mix(color, vec3(1.0, 0.95, 0.72), sheen * front * gloss * 0.88);
+        color = mix(color, vec3(1.0, 0.99, 0.91), glint * front * gloss * 0.94);
+        gl_FragColor = vec4(color, 1.0);
+        #include <colorspace_fragment>
+      }`,
+  });
+}
 
 export class FruitMeshRenderer {
   private renderer: WebGLRenderer;
@@ -40,9 +79,9 @@ export class FruitMeshRenderer {
   private outline = new ShaderMaterial({
     side: BackSide,
     vertexShader: `void main() {
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position + normal * 0.024, 1.0);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position + normal * 0.018, 1.0);
     }`,
-    fragmentShader: `void main() { gl_FragColor = vec4(0.075, 0.018, 0.055, 1.0); }`,
+    fragmentShader: `void main() { gl_FragColor = vec4(0.20, 0.055, 0.12, 1.0); }`,
   });
 
   constructor() {
@@ -53,13 +92,7 @@ export class FruitMeshRenderer {
     this.renderer.domElement.addEventListener("webglcontextlost", this.onContextLost);
     this.camera.position.z = 20;
     this.materials.add(this.outline);
-    this.scene.add(new HemisphereLight(0xfff3d0, 0x543559, 1.8));
-    const key = new DirectionalLight(0xffeed1, 2.5);
-    key.position.set(-8, 10, 15);
-    this.scene.add(key);
-    const rim = new DirectionalLight(0x9cffe5, 1.1);
-    rim.position.set(8, 3, -6);
-    this.scene.add(rim);
+
   }
 
   private onContextLost = (event: Event) => {
@@ -90,11 +123,11 @@ export class FruitMeshRenderer {
           }
           this.geometries.add(mesh.geometry);
           const original = originals[0] as MeshStandardMaterial;
-          const material = new MeshPhongMaterial({ color: original.color, shininess: 65, specular: 0x685743 });
+          const material = juicyMaterial(original.color, /leaf|stem|seed|pith|groove/.test(original.name));
           this.materials.add(material);
           mesh.material = material;
           originals.forEach((entry) => entry.dispose());
-          if (!mesh.name.endsWith("-peel") && !mesh.name.endsWith("-seed")) {
+          if (!/-(peel|seed|pith|pulp|pulpLight)$/.test(mesh.name)) {
             const outline = new Mesh(mesh.geometry, this.outline);
             outline.name = `${mesh.name}-ink`;
             mesh.add(outline);
@@ -140,7 +173,9 @@ export class FruitMeshRenderer {
       instance.object.position.set((slot % COLUMNS + 0.5) * CELL, -(Math.floor(slot / COLUMNS) + 0.5) * CELL, 0);
       // Keep cut faces/crowns readable; a gentle depth tumble makes volume visible.
       const turn = this.reducedMotion.matches ? 0 : Math.sin(now * 0.0008 + item.id * 1.7) * 0.5;
-      instance.object.rotation.set(0.18, -0.35 + turn, this.reducedMotion.matches ? -0.12 : -item.rotation * 0.22);
+      instance.object.rotation.set(0.12, -0.25 + turn * 0.65, this.reducedMotion.matches ? -0.12 : -item.rotation * 0.22);
+      const bounce = this.reducedMotion.matches ? 0 : Math.sin(now * 0.003 + item.id * 1.7) * 0.035;
+      instance.object.scale.set(1 - bounce * 0.5, 1 + bounce, 1 - bounce * 0.5);
     }
     for (const [id, instance] of this.instances) {
       if (!active.has(id)) {
