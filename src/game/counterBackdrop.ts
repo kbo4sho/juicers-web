@@ -1,4 +1,4 @@
-import { getDrinkStationLayout, type DrinkStationLayout } from "./drinkAssembly";
+import { drinkCupBox, getDrinkStationLayout, type DrinkStationLayout } from "./drinkAssembly";
 import { FRESH_PRESSED_MENU, HOUSE_MIXES_MENU } from "./model";
 
 const INK = "#321432";
@@ -23,6 +23,74 @@ export type CounterBox = {
   top: number;
   bottom: number;
 };
+
+export type StationChrome = {
+  railLeft: number;
+  cardWidth: number;
+  stackPeek: number;
+  gap: number;
+  railBottom: number;
+  cardHeight: number;
+  aimLift: number;
+  hintGap: number;
+};
+
+// Keep these fallbacks in lockstep with the --order-station-* rules in styles.css,
+// including the max-height: 500px short-landscape tightening.
+export function fallbackStationChrome(width: number, height: number): StationChrome {
+  const narrow = width < 760;
+  const short = height <= 500;
+  return {
+    railLeft: narrow ? 8 : 24,
+    cardWidth: narrow ? 155 : 200,
+    stackPeek: narrow ? 70 : 78,
+    gap: 8,
+    railBottom: short ? 10 : narrow ? 18 : 24,
+    cardHeight: narrow ? 142 : 148,
+    aimLift: short ? 8 : narrow ? 6 : 18,
+    hintGap: narrow ? 24 : 28,
+  };
+}
+
+export type ReservedStationRegions = {
+  cup: CounterBox;
+  card: CounterBox;
+  hint: CounterBox;
+};
+
+export function reservedStationRegions(
+  width: number,
+  height: number,
+  station: DrinkStationLayout,
+  chrome: StationChrome = fallbackStationChrome(width, height),
+): ReservedStationRegions {
+  const hintHeight = 28;
+  const hintWidth = Math.min(340, Math.max(220, width * 0.42));
+  const hintBottom = height - (chrome.railBottom + chrome.cardHeight + chrome.aimLift + chrome.hintGap);
+  return {
+    cup: drinkCupBox(station),
+    card: {
+      left: chrome.railLeft,
+      right: chrome.railLeft + chrome.cardWidth + chrome.stackPeek,
+      top: height - chrome.railBottom - chrome.cardHeight - chrome.aimLift,
+      bottom: height - chrome.railBottom,
+    },
+    hint: {
+      left: (width - hintWidth) * 0.5,
+      right: (width + hintWidth) * 0.5,
+      top: hintBottom - hintHeight,
+      bottom: hintBottom,
+    },
+  };
+}
+
+function boxesOverlap(a: CounterBox, b: CounterBox, pad = 0) {
+  return a.left < b.right + pad && a.right > b.left - pad && a.top < b.bottom + pad && a.bottom > b.top - pad;
+}
+
+function overlapsReserved(box: CounterBox, reserved: ReservedStationRegions, pad = 8) {
+  return boxesOverlap(box, reserved.cup, pad) || boxesOverlap(box, reserved.card, pad) || boxesOverlap(box, reserved.hint, pad);
+}
 
 export type CounterSceneLayout = {
   width: number;
@@ -225,6 +293,24 @@ export function getCounterSceneLayout(
       top: railY - 34,
       bottom: railY - 3,
     };
+  }
+
+  const reserved = reservedStationRegions(width, height, station);
+  if (cuttingBoard && overlapsReserved(cuttingBoard, reserved)) cuttingBoard = null;
+  if (juicerPress && overlapsReserved(juicerPress, reserved)) juicerPress = null;
+  if (fruitCrate && overlapsReserved(fruitCrate, reserved)) fruitCrate = null;
+  if (cupStackRight) {
+    if (!juicerPress) {
+      cupStackRight = null;
+    } else {
+      const stackBox: CounterBox = {
+        left: cupStackRight.x - 20,
+        right: cupStackRight.x + 20,
+        top: cupStackRight.baseY - 52,
+        bottom: cupStackRight.baseY + 4,
+      };
+      if (overlapsReserved(stackBox, reserved)) cupStackRight = null;
+    }
   }
 
   return {

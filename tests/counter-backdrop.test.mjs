@@ -34,21 +34,44 @@ function boxesOverlap(a, b) {
   return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 }
 
-test("counter scene layout keeps prep props inside bounds and clear of the cup station", () => {
-  for (const [width, height] of [
-    [1440, 900],
-    [1280, 800],
-    [390, 844],
-    [320, 640],
-    [844, 390],
-    [667, 375],
-  ]) {
-    const station = assembly.getDrinkStationLayout(width, height);
-    const cup = assembly.drinkCupBox(station);
-    const layout = backdrop.getCounterSceneLayout(width, height, station);
+function stationFromChrome(width, height, chrome) {
+  const cupHeight = Math.round(Math.max(76, Math.min(108, Math.min(width * 0.22, height * 0.138))));
+  const topWidth = Math.round(cupHeight * 0.74);
+  const bottomWidth = Math.round(cupHeight * 0.52);
+  const x = chrome.railLeft + chrome.cardWidth + chrome.stackPeek + chrome.gap + topWidth * 0.5;
+  return {
+    x,
+    baseY: height - chrome.railBottom - 8,
+    mouthY: height - chrome.railBottom - 8 - cupHeight,
+    cupHeight,
+    topWidth,
+    bottomWidth,
+    isNarrow: width < 760,
+  };
+}
 
-    assertInsideViewport(layout.prepMat, width, height, `${width}x${height} prepMat`);
-    assert.ok(layout.prepMat.right > cup.right, `${width}x${height} prepMat covers cup`);
+const VIEWPORTS = [
+  [1440, 900],
+  [1280, 800],
+  [1280, 500],
+  [844, 390],
+  [667, 375],
+  [390, 844],
+  [320, 640],
+];
+
+test("counter scene layout keeps prep props inside bounds and clear of the cup station", () => {
+  for (const [width, height] of VIEWPORTS) {
+    const chrome = backdrop.fallbackStationChrome(width, height);
+    const station = stationFromChrome(width, height, chrome);
+    const reserved = backdrop.reservedStationRegions(width, height, station, chrome);
+    const layout = backdrop.getCounterSceneLayout(width, height, station);
+    const label = `${width}x${height}`;
+
+    assert.equal(reserved.cup.left, assembly.drinkCupBox(station).left);
+    assert.equal(station.baseY, height - chrome.railBottom - 8, `${label} uses CSS rail bottom`);
+    assertInsideViewport(layout.prepMat, width, height, `${label} prepMat`);
+    assert.ok(layout.prepMat.right > reserved.cup.right, `${label} prepMat covers cup`);
 
     for (const [name, box] of [
       ["cuttingBoard", layout.cuttingBoard],
@@ -56,16 +79,34 @@ test("counter scene layout keeps prep props inside bounds and clear of the cup s
       ["fruitCrate", layout.fruitCrate],
     ]) {
       if (!box) continue;
-      assertInsideViewport(box, width, height, `${width}x${height} ${name}`);
-      assert.equal(boxesOverlap(box, cup), false, `${width}x${height} ${name} overlaps cup`);
-      assert.equal(boxesOverlap(box, layout.prepMat), false, `${width}x${height} ${name} overlaps prepMat`);
+      assertInsideViewport(box, width, height, `${label} ${name}`);
+      assert.equal(boxesOverlap(box, reserved.cup), false, `${label} ${name} overlaps cup`);
+      assert.equal(boxesOverlap(box, reserved.card), false, `${label} ${name} overlaps card`);
+      assert.equal(boxesOverlap(box, reserved.hint), false, `${label} ${name} overlaps hint`);
+      assert.equal(boxesOverlap(box, layout.prepMat), false, `${label} ${name} overlaps prepMat`);
     }
 
     if (layout.cupStackRight) {
-      assert.ok(layout.cupStackRight.x - 16 > layout.juicerPress.right, `${width}x${height} cupStack clears juicer`);
-      assert.ok(layout.cupStackRight.x + 16 <= width, `${width}x${height} cupStack inside viewport`);
+      assert.ok(layout.juicerPress, `${label} cupStack requires juicer`);
+      assert.ok(layout.cupStackRight.x - 16 > layout.juicerPress.right, `${label} cupStack clears juicer`);
+      assert.ok(layout.cupStackRight.x + 16 <= width, `${label} cupStack inside viewport`);
     }
   }
+});
+
+test("short-landscape chrome matches the max-height 500px CSS contract", () => {
+  const wideShort = backdrop.fallbackStationChrome(1280, 500);
+  assert.equal(wideShort.railBottom, 10);
+  assert.equal(wideShort.aimLift, 8);
+  assert.equal(wideShort.cardHeight, 148);
+  const phoneShort = backdrop.fallbackStationChrome(667, 375);
+  assert.equal(phoneShort.railBottom, 10);
+  assert.equal(phoneShort.aimLift, 8);
+  assert.equal(phoneShort.cardHeight, 142);
+  const landscapePhone = backdrop.fallbackStationChrome(844, 390);
+  assert.equal(landscapePhone.railBottom, 10);
+  assert.equal(landscapePhone.cardWidth, 200);
+  assert.equal(landscapePhone.cardHeight, 148);
 });
 
 test("counterBackdrop uses no shadowBlur calls", () => {
