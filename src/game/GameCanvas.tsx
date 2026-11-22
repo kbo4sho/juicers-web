@@ -2,7 +2,17 @@ import { useCallback, useEffect, useRef } from "react";
 import { juiceAudio } from "./audio";
 import type { FruitMeshRenderer } from "./FruitMeshRenderer";
 import {
+  createPourArc,
+  drawDrinkAssembly,
+  drawPourArcs,
+  getDrinkStationLayout,
+  prefersReducedMotion,
+  type DrinkCelebration,
+  type PourArc,
+} from "./drinkAssembly";
+import {
   chalkboardLines,
+  drinkArtSlug,
   createCustomerOrder,
   createPracticeOrder,
   createSeededRandom,
@@ -90,6 +100,7 @@ type Splatter = {
 
 type CustomerOrder = CustomerOrderSnapshot & {
   completedUntil: number;
+  pouredKinds: FruitKind[];
 };
 
 type Engine = {
@@ -121,6 +132,11 @@ type Engine = {
   aimedOrderId: number | null;
   practice: boolean;
   practiceDone: boolean;
+  pourArcs: PourArc[];
+  drinkCelebration: DrinkCelebration | null;
+  cupBounce: number;
+  visualLayerCount: number;
+  visualOrderId: number | null;
 };
 
 const ROUND_SECONDS = 60;
@@ -166,6 +182,11 @@ function newEngine(seed: number, practice = false): Engine {
     aimedOrderId: null,
     practice,
     practiceDone: false,
+    pourArcs: [],
+    drinkCelebration: null,
+    cupBounce: 0,
+    visualLayerCount: 0,
+    visualOrderId: null,
   };
 }
 
@@ -174,14 +195,14 @@ function createOrder(engine: Engine): CustomerOrder {
   const taken = engine.orders.map((order) => order.drink);
   const order = createCustomerOrder(engine.orderId, seated, taken, engine.random);
   engine.orderId += 1;
-  return { ...order, completedUntil: 0 };
+  return { ...order, completedUntil: 0, pouredKinds: [] };
 }
 
 function refreshOrders(engine: Engine, now: number, elapsed: number) {
   engine.orders = engine.orders.filter((order) => !order.completed || now < order.completedUntil);
   if (engine.practice) {
     if (engine.orders.length === 0) {
-      engine.orders.push({ ...createPracticeOrder(), completedUntil: 0 });
+      engine.orders.push({ ...createPracticeOrder(), completedUntil: 0, pouredKinds: [] });
       engine.orderId = 2;
     }
     return;
@@ -972,7 +993,7 @@ function snapshot(engine: Engine, now: number, roundMode: RoundMode): RoundSnaps
     timeLeft: engine.practice || roundMode !== "timed"
       ? null
       : Math.max(0, ROUND_SECONDS - (now - engine.startedAt) / 1000),
-    orders: engine.orders.map(({ completedUntil: _completedUntil, ...order }) => ({
+    orders: engine.orders.map(({ completedUntil: _completedUntil, pouredKinds: _pouredKinds, ...order }) => ({
       ...order,
       ingredients: [...order.ingredients],
       filled: [...order.filled],
@@ -1253,6 +1274,17 @@ export function GameCanvas({
       if (correct) {
         if (!matchingOrder || ingredientIndex < 0) return;
         matchingOrder.filled[ingredientIndex] = true;
+        matchingOrder.pouredKinds.push(kind);
+        const reducedMotion = prefersReducedMotion();
+        if (!reducedMotion) {
+          engine.pourArcs.push(createPourArc(matchingOrder.id, kind, x, y, now));
+        } else {
+          engine.visualOrderId = matchingOrder.id;
+          engine.visualLayerCount = matchingOrder.pouredKinds.length;
+        }
+        if (engine.drinkCelebration && engine.drinkCelebration.orderId !== matchingOrder.id) {
+          engine.drinkCelebration = null;
+        }
         if (!engine.practice) engine.correct += 1;
         const meta = FRUIT_META[kind];
         addSplatter(engine, x, y, meta.splash, 72 + Math.min(28, engine.combo * 2));
@@ -1279,6 +1311,16 @@ export function GameCanvas({
           engine.orderStreak += 1;
           matchingOrder.completed = true;
           matchingOrder.completedUntil = now + personaByName(matchingOrder.customer).dwellMs;
+          engine.drinkCelebration = {
+            orderId: matchingOrder.id,
+            customer: matchingOrder.customer,
+            drink: matchingOrder.drink,
+            art: drinkArtSlug(matchingOrder.drink),
+            accent: matchingOrder.accent,
+            pouredKinds: [...matchingOrder.pouredKinds],
+            startedAt: now,
+            durationMs: reducedMotion ? 1050 : 1450,
+          };
           engine.texts.push({
             x: width * 0.5,
             y: Math.max(260, height * 0.43),
@@ -1411,6 +1453,39 @@ export function GameCanvas({
       engine.flash.amount = Math.max(0, engine.flash.amount - delta * 1.7);
       engine.shake = Math.max(0, engine.shake - delta * 32);
 
+      const reducedMotion = prefersReducedMotion();
+      engine.pourArcs = engine.pourArcs.filter((arc) => {
+        const progress = (now - arc.startedAt) / arc.durationMs;
+        if (!arc.bounced && progress >= 0.62) {
+          arc.bounced = true;
+          if (!reducedMotion) engine.cupBounce = 1;
+        }
+        return progress < 1;
+      });
+      if (engine.drinkCelebration && now - engine.drinkCelebration.startedAt >= engine.drinkCelebration.durationMs) {
+        engine.drinkCelebration = null;
+      }
+      engine.cupBounce = Math.max(0, engine.cupBounce - delta * 4.5);
+
+      const aimedOrder = engine.orders.find((order) => order.id === engine.aimedOrderId && !order.completed);
+      if (!aimedOrder) {
+        engine.visualOrderId = null;
+        engine.visualLayerCount = 0;
+      } else {
+        const pendingArcs = reducedMotion
+          ? 0
+          : engine.pourArcs.filter((arc) => arc.orderId === aimedOrder.id && (now - arc.startedAt) / arc.durationMs < 0.62).length;
+        const targetLayers = Math.max(0, aimedOrder.pouredKinds.length - pendingArcs);
+        if (engine.visualOrderId !== aimedOrder.id) {
+          engine.visualOrderId = aimedOrder.id;
+          engine.visualLayerCount = targetLayers;
+        } else if (reducedMotion) {
+          engine.visualLayerCount = targetLayers;
+        } else {
+          engine.visualLayerCount += (targetLayers - engine.visualLayerCount) * Math.min(1, delta * 14);
+        }
+      }
+
       if (engine.aimedOrderId !== previousAim || now - engine.lastHudUpdate >= 90) {
         engine.lastHudUpdate = now;
         callbackRef.current.onSnapshot(snapshot(engine, now, roundModeRef.current));
@@ -1513,6 +1588,16 @@ export function GameCanvas({
 
       const livePlay = phaseRef.current === "playing" || phaseRef.current === "practice";
       if (livePlay) {
+        const reducedMotion = prefersReducedMotion();
+        const aimedOrder = engine.orders.find((order) => order.id === engine.aimedOrderId && !order.completed) ?? null;
+        drawDrinkAssembly(context, width, height, {
+          now,
+          reducedMotion,
+          aimedOrder,
+          visualLayerCount: engine.visualLayerCount,
+          cupBounce: engine.cupBounce,
+          celebration: engine.drinkCelebration,
+        });
         drawEffects(engine);
         fruitMeshes?.render(engine.items, now);
         if (fruitMeshes) canvas.dataset.fruitRenderer = fruitMeshes.status;
@@ -1523,6 +1608,7 @@ export function GameCanvas({
           }
           else drawPower(context, item.kind as PowerKind, x, item.y, item.radius, item.rotation);
         });
+        drawPourArcs(context, engine.pourArcs, getDrinkStationLayout(width, height), now, reducedMotion);
       }
 
       const frame = trackingRef.current;
