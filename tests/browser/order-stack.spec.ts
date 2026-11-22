@@ -20,103 +20,92 @@ async function landPractice(page: Page) {
 async function startRoundWithOrders(page: Page) {
   await startPractice(page);
   await landPractice(page);
-  await expect(page.getByRole("button", { name: /Show upcoming orders/ })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("button", { name: /Next order/ })).toBeVisible({ timeout: 10_000 });
 }
 
-async function showUpcoming(page: Page) {
-  const toggle = page.getByRole("button", { name: /Show upcoming orders/ });
-  if (await toggle.isVisible()) await toggle.click();
-  await expect(page.getByRole("button", { name: /Hide upcoming orders/ })).toBeVisible();
+async function cycleNext(page: Page) {
+  await page.getByRole("button", { name: /Next order/ }).click();
 }
 
-test("compact stack shows the upcoming count and keeps the aimed ticket readable", async ({ page }) => {
+test("one face-up ticket stays on the left with an upcoming count behind it", async ({ page }) => {
   await startRoundWithOrders(page);
   const aimed = page.locator(".order-card--aimed");
   await expect(aimed).toBeVisible();
   await expect(aimed.getByText("NOW")).toBeVisible();
   await expect(aimed.locator(".order-card__select")).toHaveAttribute("aria-pressed", "true");
-  const toggle = page.getByRole("button", { name: /Show upcoming orders, \d+ orders coming/ });
+  await expect(page.locator(".order-card:visible")).toHaveCount(1);
+  const toggle = page.getByRole("button", { name: /Next order/ });
   await expect(toggle).toBeVisible();
-  await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await expect(page.locator(".order-stack__badge strong")).toHaveText(/\d+ ORDERS/);
-  await expect(page.locator(".order-stack__queue")).toBeHidden();
-  await expect(page.locator(".order-stack__queue .order-card__select")).toHaveCount(2);
-  await expect(page.getByRole("button", { name: /Serve (Theo|Pip|Mina|Zara|Dax|Maya)/ })).toHaveCount(1);
-  await expect(page.getByText(/orders coming/)).toBeAttached();
+  await expect(page.getByText(/coming/)).toBeAttached();
+  const geometry = await page.evaluate(() => {
+    const rail = document.querySelector(".order-rail")!.getBoundingClientRect();
+    const card = document.querySelector(".order-card--aimed")!.getBoundingClientRect();
+    return { railLeft: rail.left, cardLeft: card.left };
+  });
+  expect(geometry.railLeft).toBeLessThan(40);
+  expect(geometry.cardLeft).toBeLessThan(80);
 });
 
-test("expanded upcoming tickets stay tappable and selection still aims a pour", async ({ page }) => {
+test("cycling the stack aims the newly visible ticket", async ({ page }) => {
   await startRoundWithOrders(page);
-  const firstName = await page.locator(".order-card--aimed .order-card__customer strong").innerText();
-  await showUpcoming(page);
-  const upcoming = page.locator(".order-stack__queue .order-card__select");
-  await expect(upcoming).toHaveCount(2);
-  await expect(upcoming.nth(0)).toBeVisible();
-  const nextName = await page.locator(".order-stack__queue .order-card__customer strong").nth(0).innerText();
-  expect(nextName).not.toEqual(firstName);
-  await upcoming.nth(0).click();
-  await expect(page.locator(".order-card--aimed .order-card__customer strong")).toHaveText(nextName);
+  const aimedName = page.locator(".order-card--aimed .order-card__customer strong");
+  const first = await aimedName.innerText();
+  await cycleNext(page);
+  await expect(aimedName).not.toHaveText(first);
   await expect(page.locator(".order-card--aimed .order-card__select")).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("button", { name: /Show upcoming orders/ })).toBeVisible();
-  await expect(page.locator(".order-stack__queue")).toBeHidden();
+  await expect(page.locator(".order-card:visible")).toHaveCount(1);
+  await cycleNext(page);
+  await cycleNext(page);
+  await expect(aimedName).toHaveText(first);
 });
 
-test("keyboard can expand the stack and select a ticket", async ({ page }) => {
+test("keyboard arrows and Enter cycle the visible ticket", async ({ page }) => {
   await startRoundWithOrders(page);
-  const toggle = page.getByRole("button", { name: /Show upcoming orders/ });
+  const aimedName = page.locator(".order-card--aimed .order-card__customer strong");
+  const first = await aimedName.innerText();
+  const toggle = page.getByRole("button", { name: /Next order/ });
   await toggle.focus();
   await page.keyboard.press("Enter");
-  await expect(page.locator(".order-stack__toggle")).toHaveAttribute("aria-expanded", "true");
-  const firstUpcoming = page.locator(".order-stack__queue .order-card__select").nth(0);
-  await firstUpcoming.focus();
-  await page.keyboard.press("Space");
-  await expect(page.locator(".order-card--aimed .order-card__select")).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator(".order-stack__queue")).toBeHidden();
+  await expect(aimedName).not.toHaveText(first);
+  const afterEnter = await aimedName.innerText();
+  await page.keyboard.press("ArrowRight");
+  await expect(aimedName).not.toHaveText(afterEnter);
+  await page.keyboard.press("ArrowLeft");
+  await expect(aimedName).toHaveText(afterEnter);
 });
 
-test("collapsed upcoming tickets are not focusable", async ({ page }) => {
+test("upcoming tickets are not in the tab order", async ({ page }) => {
   await startRoundWithOrders(page);
-  const hiddenButtons = page.locator(".order-stack__queue .order-card__select");
-  await expect(hiddenButtons).toHaveCount(2);
-  for (let index = 0; index < 16; index += 1) {
+  await expect(page.locator(".order-card__select")).toHaveCount(1);
+  for (let index = 0; index < 12; index += 1) {
     await page.keyboard.press("Tab");
-    const focusedHidden = await page.evaluate(() => {
+    const hiddenAimed = await page.evaluate(() => {
       const active = document.activeElement;
-      return Boolean(active?.closest(".order-stack__queue"));
+      return Boolean(active?.closest(".order-card") && !active.closest(".order-card--aimed") && !active.closest(".order-stack__toggle"));
     });
-    expect(focusedHidden).toBe(false);
+    expect(hiddenAimed).toBe(false);
   }
 });
 
-test("phone rail stays in bounds and still swipes once the stack is open", async ({ browser }) => {
+test("phone station stays in bounds and the idle left glove sits clear of the cup", async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
   const page = await context.newPage();
   await startRoundWithOrders(page);
-  const compact = await page.evaluate(() => {
-    const rail = document.querySelector(".order-rail");
-    const style = rail ? getComputedStyle(rail) : null;
+  const layout = await page.evaluate(() => {
+    const rail = document.querySelector(".order-rail") as HTMLElement;
     return {
       document: document.documentElement.scrollWidth,
-      overflowX: style?.overflowX ?? "",
+      overflowX: getComputedStyle(rail).overflowX,
+      railRight: rail.getBoundingClientRect().right,
     };
   });
-  expect(compact.document).toBeLessThanOrEqual(390);
-  expect(compact.overflowX).toBe("hidden");
-  await showUpcoming(page);
-  const queue = page.locator(".order-stack__queue");
-  await expect(queue.locator(".order-card__select").nth(0)).toBeVisible();
-  const beforeSwipe = await page.locator(".order-rail").evaluate((rail) => rail.scrollLeft);
-  await queue.locator(".order-card__select").nth(1).scrollIntoViewIfNeeded();
-  const afterSwipe = await page.locator(".order-rail").evaluate((rail) => ({
-    scrollLeft: rail.scrollLeft,
-    overflowX: getComputedStyle(rail).overflowX,
-    document: document.documentElement.scrollWidth,
-  }));
-  expect(afterSwipe.overflowX).toMatch(/auto|scroll/);
-  expect(afterSwipe.scrollLeft).toBeGreaterThanOrEqual(beforeSwipe);
-  expect(afterSwipe.document).toBeLessThanOrEqual(390);
-  await queue.locator(".order-card__select").nth(1).tap();
+  expect(layout.document).toBeLessThanOrEqual(390);
+  expect(layout.railRight).toBeLessThan(300);
+  await cycleNext(page);
   await expect(page.locator(".order-card--aimed .order-card__select")).toHaveAttribute("aria-pressed", "true");
+  const after = await page.evaluate(() => document.documentElement.scrollWidth);
+  expect(after).toBeLessThanOrEqual(390);
   await context.close();
 });
 

@@ -324,22 +324,25 @@ button:focus-visible, canvas:focus-visible { outline: 3px solid #fff176; outline
 .order-card--calm .order-card__customer small { color: #2f776b; }
 @keyframes ticketWait { to { transform: translateY(-5px); } }
 
-.order-rail--compact,
-.order-rail--expanded { width: auto; max-width: min(900px, calc(100vw - 170px)); }
-.order-rail--compact .order-card,
-.order-rail--expanded > .order-card { flex: 0 0 auto; width: 200px; }
-.order-stack { position: relative; z-index: 2; display: flex; align-items: flex-end; flex: 0 0 auto; margin: 0 2px 2px; pointer-events: auto; }
+.order-rail--compact {
+  left: 24px; width: auto; max-width: none; transform: none; justify-content: flex-start;
+  padding-right: 40px;
+}
+.order-rail--compact .order-card { flex: 0 0 auto; width: 200px; }
+.order-station { position: relative; display: flex; align-items: flex-end; pointer-events: auto; }
 .order-stack__toggle {
-  position: relative; display: grid; place-items: end center; width: 92px; height: 124px;
-  padding: 0; border: 0; background: transparent; color: var(--ink); cursor: pointer; touch-action: manipulation;
+  position: absolute; z-index: 2; left: 100%; top: 18px; display: grid; place-items: end center;
+  width: 78px; height: 118px; padding: 0; border: 0; background: transparent; color: var(--ink);
+  cursor: pointer; touch-action: manipulation; pointer-events: auto;
 }
 .order-stack__toggle:focus-visible { outline: 4px solid var(--mint); outline-offset: 3px; border-radius: 10px; }
-.order-stack__pile { position: absolute; inset: 16px 10px 18px 6px; pointer-events: none; }
+.order-station > .order-card { position: relative; z-index: 1; }
+.order-stack__pile { position: absolute; inset: 10px 8px 22px 4px; pointer-events: none; }
 .order-stack__leaf {
   position: absolute; inset: 0; border: 3px solid var(--ink); border-radius: 8px 7px 12px 10px;
   background: linear-gradient(155deg, #fff1d5, #ead3ad);
   box-shadow: 4px 5px 0 rgba(58,23,54,.55);
-  transform: translate(calc(var(--stack-i) * 7px), calc(var(--stack-i) * -8px)) rotate(calc((var(--stack-i) - 1) * -4deg));
+  transform: translate(calc(var(--stack-i) * 6px), calc(var(--stack-i) * -7px)) rotate(calc((var(--stack-i) - 1) * -5deg));
   animation: stackIdle 1.4s ease-in-out calc(var(--stack-i) * .08s) infinite alternate;
 }
 .order-stack__leaf::before {
@@ -348,20 +351,16 @@ button:focus-visible, canvas:focus-visible { outline: 3px solid #fff176; outline
   background: repeating-linear-gradient(90deg, var(--order-accent) 0 12px, var(--cream) 12px 18px);
 }
 @keyframes stackIdle {
-  to { transform: translate(calc(var(--stack-i) * 7px), calc(var(--stack-i) * -8px - 3px)) rotate(calc((var(--stack-i) - 1) * -4deg)); }
+  to { transform: translate(calc(var(--stack-i) * 6px), calc(var(--stack-i) * -7px - 3px)) rotate(calc((var(--stack-i) - 1) * -5deg)); }
 }
 .order-stack__badge {
   position: relative; z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 1px;
-  min-width: 78px; padding: 6px 9px 7px; border: 3px solid var(--ink); border-radius: 8px 6px 10px 7px;
+  min-width: 74px; padding: 6px 8px 7px; border: 3px solid var(--ink); border-radius: 8px 6px 10px 7px;
   background: #ffe27a; color: var(--ink); transform: rotate(-3deg);
   box-shadow: 3px 4px 0 var(--tomato), 6px 7px 0 var(--ink); white-space: nowrap; pointer-events: none;
 }
 .order-stack__badge small { color: #9a3a2c; font: 1000 8px/1 "DM Sans", sans-serif; letter-spacing: 1.6px; }
-.order-stack__badge strong { font: 1000 12px/1 "Archivo Black", Impact, sans-serif; letter-spacing: .3px; }
-.order-stack__queue { display: flex; align-items: flex-end; gap: 9px; margin-left: 8px; }
-.order-stack__queue[hidden] { display: none !important; }
-.order-stack__queue .order-card { flex: 0 0 auto; width: 200px; }
-.order-stack--open .order-stack__leaf { animation: none; }
+.order-stack__badge strong { font: 1000 11px/1 "Archivo Black", Impact, sans-serif; letter-spacing: .3px; }
 
 
 .practice-banner {
@@ -894,13 +893,9 @@ button:focus-visible, canvas:focus-visible { outline: 3px solid #fff176; outline
   .order-card--aimed { transform: translateY(-6px); }
   .control-hint { bottom: 218px; }
   .order-card:nth-child(n+4) { display: block; }
-  .order-rail--compact,
-  .order-rail--expanded { max-width: none; width: calc(100vw - 16px); }
-  .order-rail--compact { overflow-x: hidden; }
-  .order-rail--compact .order-card,
-  .order-rail--expanded > .order-card,
-  .order-stack__queue .order-card { width: 155px; }
-  .order-stack__toggle { width: 78px; height: 112px; }
-  .order-stack__badge { min-width: 70px; padding: 5px 7px 6px; }
+  .order-rail--compact { left: 8px; width: auto; max-width: calc(100vw - 16px); overflow: visible; padding-right: 36px; }
+  .order-rail--compact .order-card { width: 155px; }
+  .order-stack__toggle { left: 100%; right: auto; width: 70px; height: 108px; }
+  .order-stack__badge { min-width: 68px; padding: 5px 7px 6px; }
   .order-stack__badge strong { font-size: 10px; }
 }

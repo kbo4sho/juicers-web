@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type Ref } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { juiceAudio } from "./game/audio";
 import type { AudioScene } from "./game/audioScore";
 import { GameCanvas } from "./game/GameCanvas";
@@ -71,9 +71,8 @@ function prefersReducedMotion() {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-function CustomerOrderCard({ order, index, aimed, onSelect, selectRef }: {
+function CustomerOrderCard({ order, index, aimed, onSelect }: {
   order: CustomerOrderSnapshot; index: number; aimed: boolean; onSelect: () => void;
-  selectRef?: Ref<HTMLButtonElement>;
 }) {
   const press = useRef<{ id: number; x: number; y: number; at: number; moved: boolean } | null>(null);
   const allowClick = useRef(false);
@@ -90,7 +89,6 @@ function CustomerOrderCard({ order, index, aimed, onSelect, selectRef }: {
       <button
         type="button"
         className="order-card__select"
-        ref={selectRef}
         aria-label={`Serve ${order.customer}'s ${order.drink}`}
         aria-pressed={aimed && !order.completed}
         disabled={order.completed}
@@ -164,67 +162,41 @@ function OrderRail({ orders, aimedOrderId, onSelect }: {
   aimedOrderId: number | null;
   onSelect: (id: number) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const aimedSelectRef = useRef<HTMLButtonElement>(null);
   const open = orders.filter((order) => !order.completed);
-  const completing = orders.filter((order) => order.completed);
   const aimed = open.find((order) => order.id === aimedOrderId) ?? open[0] ?? null;
   const upcoming = open.filter((order) => order.id !== aimed?.id);
   const upcomingCount = upcoming.length;
 
-  useEffect(() => {
-    if (!expanded) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setExpanded(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [expanded]);
-
-  useEffect(() => {
-    const active = document.activeElement;
-    if (active instanceof HTMLElement && active.closest(".order-stack__queue")) {
-      aimedSelectRef.current?.focus();
-    }
-  }, [aimedOrderId]);
+  const cycle = (delta: number) => {
+    if (open.length < 2 || !aimed) return;
+    const current = open.findIndex((order) => order.id === aimed.id);
+    const next = open[(current + delta + open.length) % open.length];
+    if (next) onSelect(next.id);
+  };
 
   const indexOf = (order: CustomerOrderSnapshot) => orders.findIndex((entry) => entry.id === order.id);
 
   return (
     <section
-      className={`order-rail${aimedOrderId !== null ? " order-rail--aiming" : ""}${expanded ? " order-rail--expanded" : " order-rail--compact"}`}
+      className={`order-rail${aimedOrderId !== null ? " order-rail--aiming" : ""} order-rail--compact`}
       aria-label="Customer orders"
     >
-      {completing.map((order) => (
-        <CustomerOrderCard
-          order={order}
-          index={indexOf(order)}
-          aimed={false}
-          onSelect={() => {}}
-          key={order.id}
-        />
-      ))}
-      {aimed && (
-        <CustomerOrderCard
-          order={aimed}
-          index={indexOf(aimed)}
-          aimed={aimedOrderId === aimed.id}
-          onSelect={() => onSelect(aimed.id)}
-          selectRef={aimedSelectRef}
-          key={aimed.id}
-        />
-      )}
-      {upcomingCount > 0 && (
-        <div className={`order-stack${expanded ? " order-stack--open" : ""}`}>
+      <div className="order-station">
+        {upcomingCount > 0 && (
           <button
             type="button"
             className="order-stack__toggle"
-            aria-expanded={expanded}
-            aria-controls="upcoming-orders"
-            aria-label={expanded
-              ? `Hide upcoming orders, ${upcomingCountLabel(upcomingCount)} coming`
-              : `Show upcoming orders, ${upcomingCountLabel(upcomingCount)} coming`}
-            onClick={() => setExpanded((current) => !current)}
+            aria-label={`Next order. ${upcomingCountLabel(upcomingCount)} coming. Now serving ${aimed?.customer ?? "the current ticket"}.`}
+            onClick={() => cycle(1)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+                event.preventDefault();
+                cycle(1);
+              } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+                event.preventDefault();
+                cycle(-1);
+              }
+            }}
           >
             <span className="order-stack__pile" aria-hidden="true">
               {upcoming.slice(0, 3).map((order, stackIndex) => (
@@ -240,30 +212,20 @@ function OrderRail({ orders, aimedOrderId, onSelect }: {
               <strong>{upcomingCount} {upcomingCount === 1 ? "ORDER" : "ORDERS"}</strong>
             </span>
           </button>
-          <div
-            id="upcoming-orders"
-            className="order-stack__queue"
-            hidden={!expanded}
-            role="group"
-            aria-label="Upcoming orders"
-          >
-            {upcoming.map((order) => (
-              <CustomerOrderCard
-                order={order}
-                index={indexOf(order)}
-                aimed={false}
-                onSelect={() => {
-                  setExpanded(false);
-                  onSelect(order.id);
-                }}
-                key={order.id}
-              />
-            ))}
-          </div>
-        </div>
-      )}
+        )}
+        {aimed && (
+          <CustomerOrderCard
+            order={aimed}
+            index={indexOf(aimed)}
+            aimed={aimedOrderId === aimed.id}
+            onSelect={() => onSelect(aimed.id)}
+          />
+        )}
+      </div>
       <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {upcomingCount > 0 ? `${upcomingCountLabel(upcomingCount)} coming` : "No more orders coming"}
+        {aimed
+          ? `Now serving ${aimed.customer}'s ${aimed.drink}. ${upcomingCount > 0 ? `${upcomingCountLabel(upcomingCount)} coming.` : "No more orders coming."}`
+          : "No open orders"}
       </div>
     </section>
   );

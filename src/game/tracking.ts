@@ -15,11 +15,18 @@ export type TrackingFrame = {
 
 export type VisionStatus = "idle" | "loading" | "ready" | "error";
 
+// Park the idle left glove in the mid playfield, above the left-hand
+// ticket-and-cup station, so it no longer covers the cup on a phone.
+export const DEMO_HAND_HOME = {
+  left: { x: 0.2, y: 0.52 },
+  right: { x: 0.68, y: 0.56 },
+} as const;
+
 export const makeDemoFrame = (): TrackingFrame => ({
   source: "demo",
   hands: [
-    { id: "left", x: 0.32, y: 0.68, closed: false, confidence: 1 },
-    { id: "right", x: 0.68, y: 0.68, closed: false, confidence: 1 },
+    { id: "left", x: DEMO_HAND_HOME.left.x, y: DEMO_HAND_HOME.left.y, closed: false, confidence: 1 },
+    { id: "right", x: DEMO_HAND_HOME.right.x, y: DEMO_HAND_HOME.right.y, closed: false, confidence: 1 },
   ],
   updatedAt: performance.now(),
 });
