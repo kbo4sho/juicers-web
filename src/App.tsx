@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { juiceAudio } from "./game/audio";
 import type { AudioScene } from "./game/audioScore";
 import { GameCanvas } from "./game/GameCanvas";
@@ -20,6 +20,7 @@ import {
   type TrackingFrame,
   type VisionStatus,
 } from "./game/tracking";
+import { attachPileFocusRestore } from "./game/orderStationFocus";
 
 type Screen = "welcome" | "permission" | "tutorial" | "practice" | "countdown" | "playing" | "results";
 type PlayMode = "camera" | "demo";
@@ -157,6 +158,59 @@ function upcomingCountLabel(count: number) {
   return count === 1 ? "1 order" : `${count} orders`;
 }
 
+function UpcomingOrderToggle({
+  upcoming,
+  upcomingCount,
+  currentCustomer,
+  onCycle,
+}: {
+  upcoming: CustomerOrderSnapshot[];
+  upcomingCount: number;
+  currentCustomer: string;
+  onCycle: (delta: number) => void;
+}) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useLayoutEffect(() => {
+    const button = buttonRef.current;
+    if (!button) return undefined;
+    return attachPileFocusRestore(button);
+  }, []);
+
+  return (
+    <button
+      ref={buttonRef}
+      type="button"
+      className="order-stack__toggle"
+      aria-label={`Next order. ${upcomingCountLabel(upcomingCount)} coming. Now serving ${currentCustomer}.`}
+      onClick={() => onCycle(1)}
+      onKeyDown={(event) => {
+        if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+          event.preventDefault();
+          onCycle(1);
+        } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+          event.preventDefault();
+          onCycle(-1);
+        }
+      }}
+    >
+      <span className="order-stack__pile" aria-hidden="true">
+        {upcoming.slice(0, 3).map((order, stackIndex) => (
+          <i
+            className="order-stack__leaf"
+            style={{ "--order-accent": order.accent, "--stack-i": String(stackIndex) } as React.CSSProperties}
+            key={order.id}
+          />
+        ))}
+      </span>
+      <span className="order-stack__badge" aria-hidden="true">
+        <small>+</small>
+        <strong>{upcomingCount} {upcomingCount === 1 ? "ORDER" : "ORDERS"}</strong>
+      </span>
+    </button>
+  );
+}
+
 function OrderRail({ orders, aimedOrderId, onSelect }: {
   orders: CustomerOrderSnapshot[];
   aimedOrderId: number | null;
@@ -182,36 +236,13 @@ function OrderRail({ orders, aimedOrderId, onSelect }: {
       aria-label="Customer orders"
     >
       <div className="order-station">
-        {upcomingCount > 0 && (
-          <button
-            type="button"
-            className="order-stack__toggle"
-            aria-label={`Next order. ${upcomingCountLabel(upcomingCount)} coming. Now serving ${aimed?.customer ?? "the current ticket"}.`}
-            onClick={() => cycle(1)}
-            onKeyDown={(event) => {
-              if (event.key === "ArrowRight" || event.key === "ArrowDown") {
-                event.preventDefault();
-                cycle(1);
-              } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
-                event.preventDefault();
-                cycle(-1);
-              }
-            }}
-          >
-            <span className="order-stack__pile" aria-hidden="true">
-              {upcoming.slice(0, 3).map((order, stackIndex) => (
-                <i
-                  className="order-stack__leaf"
-                  style={{ "--order-accent": order.accent, "--stack-i": String(stackIndex) } as React.CSSProperties}
-                  key={order.id}
-                />
-              ))}
-            </span>
-            <span className="order-stack__badge" aria-hidden="true">
-              <small>+</small>
-              <strong>{upcomingCount} {upcomingCount === 1 ? "ORDER" : "ORDERS"}</strong>
-            </span>
-          </button>
+        {upcomingCount > 0 && aimed && (
+          <UpcomingOrderToggle
+            upcoming={upcoming}
+            upcomingCount={upcomingCount}
+            currentCustomer={aimed.customer}
+            onCycle={cycle}
+          />
         )}
         {aimed && (
           <CustomerOrderCard
@@ -829,8 +860,8 @@ export function App() {
             {screen === "practice"
               ? (mode === "camera" ? "PRACTICE · OVERLAP FRUIT · CLOSE FIST" : "PRACTICE · MOVE ONTO THE FRUIT · SQUEEZE")
               : mode === "camera"
-                ? "TAP A TICKET · OVERLAP FRUIT · CLOSE FIST"
-                : "TAP A TICKET  ·  SQUEEZE FRUIT: CLICK / SPACE"}
+                ? "PILE / ARROWS · OVERLAP FRUIT · CLOSE FIST"
+                : "PILE / ARROWS  ·  SQUEEZE FRUIT: CLICK / SPACE"}
           </div>
         </>
       )}

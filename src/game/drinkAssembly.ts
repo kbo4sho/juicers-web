@@ -85,6 +85,7 @@ export function createPourArc(
 
 // Keep the HTML ticket rail and the canvas cup on one station: one face-up
 // card at the far left, the cup immediately to its right on the same rail.
+// These fallbacks must match the --order-station-* CSS custom properties.
 export const ORDER_STATION = {
   narrowBreakpoint: 760,
   railLeft: { wide: 24, narrow: 8 },
@@ -94,20 +95,82 @@ export const ORDER_STATION = {
   railBottom: { wide: 24, narrow: 18 },
 } as const;
 
+export const ORDER_STATION_VARS = {
+  railLeft: "--order-station-left",
+  cardWidth: "--order-station-card-width",
+  stackPeek: "--order-station-stack-peek",
+  gap: "--order-station-gap",
+  railBottom: "--order-station-rail-bottom",
+} as const;
+
+export type OrderStationMetrics = {
+  railLeft: number;
+  cardWidth: number;
+  stackPeek: number;
+  gap: number;
+  railBottom: number;
+};
+
+let stationMetricsCache: { cacheKey: string; metrics: OrderStationMetrics } | null = null;
+
+export function fallbackOrderStationMetrics(width: number): OrderStationMetrics {
+  const size = width < ORDER_STATION.narrowBreakpoint ? "narrow" : "wide";
+  return {
+    railLeft: ORDER_STATION.railLeft[size],
+    cardWidth: ORDER_STATION.cardWidth[size],
+    stackPeek: ORDER_STATION.stackPeek[size],
+    gap: ORDER_STATION.gap[size],
+    railBottom: ORDER_STATION.railBottom[size],
+  };
+}
+
+export function getOrderStationMetrics(width: number): OrderStationMetrics {
+  const fallback = fallbackOrderStationMetrics(width);
+  if (typeof window === "undefined" || typeof getComputedStyle !== "function") return fallback;
+  const styles = getComputedStyle(document.documentElement);
+  const cacheKey = [
+    String(window.innerWidth),
+    styles.getPropertyValue(ORDER_STATION_VARS.railLeft),
+    styles.getPropertyValue(ORDER_STATION_VARS.cardWidth),
+    styles.getPropertyValue(ORDER_STATION_VARS.stackPeek),
+    styles.getPropertyValue(ORDER_STATION_VARS.gap),
+    styles.getPropertyValue(ORDER_STATION_VARS.railBottom),
+  ].join("|");
+  if (stationMetricsCache?.cacheKey === cacheKey) return stationMetricsCache.metrics;
+  const read = (name: string, fallbackValue: number) => {
+    const value = Number.parseFloat(styles.getPropertyValue(name));
+    return Number.isFinite(value) ? value : fallbackValue;
+  };
+  const metrics: OrderStationMetrics = {
+    railLeft: read(ORDER_STATION_VARS.railLeft, fallback.railLeft),
+    cardWidth: read(ORDER_STATION_VARS.cardWidth, fallback.cardWidth),
+    stackPeek: read(ORDER_STATION_VARS.stackPeek, fallback.stackPeek),
+    gap: read(ORDER_STATION_VARS.gap, fallback.gap),
+    railBottom: read(ORDER_STATION_VARS.railBottom, fallback.railBottom),
+  };
+  stationMetricsCache = { cacheKey, metrics };
+  return metrics;
+}
+
+export function drinkCupBox(layout: DrinkStationLayout) {
+  return {
+    left: layout.x - layout.topWidth * 0.5,
+    right: layout.x + layout.topWidth * 0.5,
+    top: layout.mouthY,
+    bottom: layout.baseY,
+  };
+}
+
 export function getDrinkStationLayout(width: number, height: number): DrinkStationLayout {
   const isNarrow = width < ORDER_STATION.narrowBreakpoint;
-  const size = isNarrow ? "narrow" : "wide";
+  const metrics = getOrderStationMetrics(width);
   const cupHeight = Math.round(
     Math.max(76, Math.min(108, Math.min(width * 0.22, height * 0.138))),
   );
   const topWidth = Math.round(cupHeight * 0.74);
   const bottomWidth = Math.round(cupHeight * 0.52);
-  const stationLeft = ORDER_STATION.railLeft[size];
-  const cardWidth = ORDER_STATION.cardWidth[size];
-  const stackPeek = ORDER_STATION.stackPeek[size];
-  const gap = ORDER_STATION.gap[size];
-  const x = stationLeft + cardWidth + stackPeek + gap + topWidth * 0.5;
-  const baseY = height - ORDER_STATION.railBottom[size] - 8;
+  const x = metrics.railLeft + metrics.cardWidth + metrics.stackPeek + metrics.gap + topWidth * 0.5;
+  const baseY = height - metrics.railBottom - 8;
   return {
     x,
     baseY,
@@ -117,6 +180,25 @@ export function getDrinkStationLayout(width: number, height: number): DrinkStati
     bottomWidth,
     isNarrow,
   };
+}
+
+export function stepPourArcs(
+  arcs: PourArc[],
+  aimedOrderId: number | null,
+  now: number,
+  reducedMotion: boolean,
+): { arcs: PourArc[]; bounce: boolean } {
+  let bounce = false;
+  const next = arcs.filter((arc) => {
+    if (arc.orderId !== aimedOrderId) return false;
+    const progress = (now - arc.startedAt) / arc.durationMs;
+    if (!arc.bounced && progress >= 0.62) {
+      arc.bounced = true;
+      if (!reducedMotion) bounce = true;
+    }
+    return progress < 1;
+  });
+  return { arcs: next, bounce };
 }
 
 function getCupPaths(topWidth: number, bottomWidth: number, cupHeight: number): CupPaths {

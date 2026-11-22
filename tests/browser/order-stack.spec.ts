@@ -27,6 +27,43 @@ async function cycleNext(page: Page) {
   await page.getByRole("button", { name: /Next order/ }).click();
 }
 
+type Box = { left: number; right: number; top: number; bottom: number };
+
+function boxesIntersect(a: Box, b: Box) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+async function stationGeometry(page: Page) {
+  await page.waitForFunction(() => Boolean(document.querySelector("canvas")?.dataset.drinkCup));
+  return page.evaluate(() => {
+    const canvas = document.querySelector("canvas") as HTMLCanvasElement;
+    const canvasBox = canvas.getBoundingClientRect();
+    const shift = (box: Box): Box => ({
+      left: canvasBox.left + box.left,
+      right: canvasBox.left + box.right,
+      top: canvasBox.top + box.top,
+      bottom: canvasBox.top + box.bottom,
+    });
+    const cupLocal = JSON.parse(canvas.dataset.drinkCup || "null") as Box | null;
+    const gloveLocal = JSON.parse(canvas.dataset.leftGloveBox || "null") as Box | null;
+    const pileRect = document.querySelector(".order-stack__toggle")?.getBoundingClientRect();
+    const rail = document.querySelector(".order-rail") as HTMLElement;
+    const styles = getComputedStyle(document.documentElement);
+    const railStyle = getComputedStyle(rail);
+    return {
+      cup: cupLocal ? shift(cupLocal) : null,
+      glove: gloveLocal ? shift(gloveLocal) : null,
+      pile: pileRect
+        ? { left: pileRect.left, right: pileRect.right, top: pileRect.top, bottom: pileRect.bottom }
+        : null,
+      stationLeft: Number.parseFloat(styles.getPropertyValue("--order-station-left")),
+      railLeft: rail.getBoundingClientRect().left,
+      paddingLeft: Number.parseFloat(railStyle.paddingLeft),
+      documentWidth: document.documentElement.scrollWidth,
+    };
+  });
+}
+
 test("one face-up ticket stays on the left with an upcoming count behind it", async ({ page }) => {
   await startRoundWithOrders(page);
   const aimed = page.locator(".order-card--aimed");
@@ -45,6 +82,7 @@ test("one face-up ticket stays on the left with an upcoming count behind it", as
   });
   expect(geometry.railLeft).toBeLessThan(40);
   expect(geometry.cardLeft).toBeLessThan(80);
+  await expect(page.locator(".control-hint")).toContainText("PILE / ARROWS");
 });
 
 test("cycling the stack aims the newly visible ticket", async ({ page }) => {
@@ -88,24 +126,37 @@ test("upcoming tickets are not in the tab order", async ({ page }) => {
   }
 });
 
-test("phone station stays in bounds and the idle left glove sits clear of the cup", async ({ browser }) => {
+test("phone station keeps the cup clear of the pile and the idle left glove", async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
   const page = await context.newPage();
   await startRoundWithOrders(page);
-  const layout = await page.evaluate(() => {
-    const rail = document.querySelector(".order-rail") as HTMLElement;
-    return {
-      document: document.documentElement.scrollWidth,
-      overflowX: getComputedStyle(rail).overflowX,
-      railRight: rail.getBoundingClientRect().right,
-    };
-  });
-  expect(layout.document).toBeLessThanOrEqual(390);
-  expect(layout.railRight).toBeLessThan(300);
+  await page.waitForFunction(() => Boolean(document.querySelector("canvas")?.dataset.drinkCup && document.querySelector("canvas")?.dataset.leftGloveBox));
+
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.waitForFunction((viewportWidth) => (
+      window.innerWidth === viewportWidth
+      && Boolean(document.querySelector("canvas")?.dataset.drinkCup)
+    ), width);
+    const geometry = await stationGeometry(page);
+    expect(geometry.paddingLeft, `${width} padding-left`).toBe(0);
+    expect(geometry.railLeft, `${width} rail left`).toBeCloseTo(geometry.stationLeft, 0);
+    expect(geometry.cup, `${width} cup`).toBeTruthy();
+    expect(geometry.pile, `${width} pile`).toBeTruthy();
+    expect(boxesIntersect(geometry.cup!, geometry.pile!), `${width} cup overlaps pile`).toBe(false);
+    expect(geometry.documentWidth, `${width} overflow`).toBeLessThanOrEqual(width);
+    if (width === 390) {
+      expect(geometry.glove).toBeTruthy();
+      expect(boxesIntersect(geometry.glove!, geometry.cup!), "idle left glove overlaps cup").toBe(false);
+    }
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 });
   await cycleNext(page);
   await expect(page.locator(".order-card--aimed .order-card__select")).toHaveAttribute("aria-pressed", "true");
-  const after = await page.evaluate(() => document.documentElement.scrollWidth);
-  expect(after).toBeLessThanOrEqual(390);
+  const after = await stationGeometry(page);
+  expect(after.documentWidth).toBeLessThanOrEqual(390);
+  expect(boxesIntersect(after.cup!, after.pile!)).toBe(false);
   await context.close();
 });
 
@@ -114,4 +165,39 @@ test("stack leaves do not animate when the user prefers reduced motion", async (
   await startRoundWithOrders(page);
   const animation = await page.locator(".order-stack__leaf").first().evaluate((node) => getComputedStyle(node).animationName);
   expect(animation === "none" || animation === "").toBeTruthy();
+});
+
+test("unmounting the pile moves focus to the remaining ticket", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { attachPileFocusRestore } = await import("/src/game/orderStationFocus.ts");
+    const station = document.createElement("div");
+    station.className = "order-station";
+    const toggle = document.createElement("button");
+    toggle.className = "order-stack__toggle";
+    toggle.textContent = "Next order";
+    const select = document.createElement("button");
+    select.className = "order-card__select";
+    select.textContent = "Serve Maya's Citrus Pop";
+    station.append(toggle, select);
+    document.body.append(station);
+
+    const restore = attachPileFocusRestore(toggle);
+    toggle.focus();
+    restore();
+    const restored = document.activeElement === select;
+
+    const other = document.createElement("button");
+    document.body.append(other);
+    other.focus();
+    const ignored = attachPileFocusRestore(toggle);
+    ignored();
+    const stayedOnOther = document.activeElement === other;
+
+    station.remove();
+    other.remove();
+    return { restored, stayedOnOther };
+  });
+  expect(result.restored).toBe(true);
+  expect(result.stayedOnOther).toBe(true);
 });

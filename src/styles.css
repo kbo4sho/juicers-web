@@ -13,6 +13,21 @@
   --cream: #f4dfbd;
   --tomato: #df544c;
   --aqua: #54c1b5;
+  --order-station-left: 24px;
+  --order-station-card-width: 200px;
+  --order-station-stack-peek: 78px;
+  --order-station-gap: 8px;
+  --order-station-rail-bottom: 24px;
+}
+
+@media (max-width: 760px) {
+  :root {
+    --order-station-left: 8px;
+    --order-station-card-width: 155px;
+    --order-station-stack-peek: 70px;
+    --order-station-gap: 8px;
+    --order-station-rail-bottom: 18px;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -325,14 +340,14 @@ button:focus-visible, canvas:focus-visible { outline: 3px solid #fff176; outline
 @keyframes ticketWait { to { transform: translateY(-5px); } }
 
 .order-rail--compact {
-  left: 24px; width: auto; max-width: none; transform: none; justify-content: flex-start;
-  padding-right: 40px;
+  left: var(--order-station-left); width: auto; max-width: none; transform: none; justify-content: flex-start;
+  padding-left: 0; padding-right: 40px;
 }
-.order-rail--compact .order-card { flex: 0 0 auto; width: 200px; }
+.order-rail--compact .order-card { flex: 0 0 auto; width: var(--order-station-card-width); }
 .order-station { position: relative; display: flex; align-items: flex-end; pointer-events: auto; }
 .order-stack__toggle {
   position: absolute; z-index: 2; left: 100%; top: 18px; display: grid; place-items: end center;
-  width: 78px; height: 118px; padding: 0; border: 0; background: transparent; color: var(--ink);
+  width: var(--order-station-stack-peek); height: 118px; padding: 0; border: 0; background: transparent; color: var(--ink);
   cursor: pointer; touch-action: manipulation; pointer-events: auto;
 }
 .order-stack__toggle:focus-visible { outline: 4px solid var(--mint); outline-offset: 3px; border-radius: 10px; }
@@ -893,9 +908,9 @@ button:focus-visible, canvas:focus-visible { outline: 3px solid #fff176; outline
   .order-card--aimed { transform: translateY(-6px); }
   .control-hint { bottom: 218px; }
   .order-card:nth-child(n+4) { display: block; }
-  .order-rail--compact { left: 8px; width: auto; max-width: calc(100vw - 16px); overflow: visible; padding-right: 36px; }
-  .order-rail--compact .order-card { width: 155px; }
-  .order-stack__toggle { left: 100%; right: auto; width: 70px; height: 108px; }
+  .order-rail--compact { left: var(--order-station-left); width: auto; max-width: calc(100vw - 16px); overflow: visible; padding-left: 0; padding-right: 36px; }
+  .order-rail--compact .order-card { width: var(--order-station-card-width); }
+  .order-stack__toggle { left: 100%; right: auto; width: var(--order-station-stack-peek); height: 108px; }
   .order-stack__badge { min-width: 68px; padding: 5px 7px 6px; }
   .order-stack__badge strong { font-size: 10px; }
 }

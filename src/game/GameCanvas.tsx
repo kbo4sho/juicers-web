@@ -3,10 +3,12 @@ import { juiceAudio } from "./audio";
 import type { FruitMeshRenderer } from "./FruitMeshRenderer";
 import {
   createPourArc,
+  drinkCupBox,
   drawDrinkAssembly,
   drawPourArcs,
   getDrinkStationLayout,
   prefersReducedMotion,
+  stepPourArcs,
   type DrinkCelebration,
   type PourArc,
 } from "./drinkAssembly";
@@ -352,50 +354,114 @@ function drawFallbackFruit(
   context.restore();
 }
 
-function drawFruit(
+// Inked cel presence is baked once per fruit kind and quantized size so the
+// live frame only draws the cached sprite. shadowBlur is used only at bake time.
+type BakedFruitSprite = {
+  canvas: HTMLCanvasElement;
+  cx: number;
+  cy: number;
+  cssWidth: number;
+  cssHeight: number;
+  radius: number;
+};
+
+const FRUIT_PRESENCE_CACHE = new Map<string, BakedFruitSprite>();
+
+function fruitDrawSize(kind: FruitKind, radius: number) {
+  return radius * (kind === "pineapple" ? 3.55 : 3.25);
+}
+
+function bakeFruitPresence(kind: FruitKind, radius: number): BakedFruitSprite | null {
+  const sprite = FRUIT_SPRITES[kind];
+  if (!sprite?.complete || sprite.naturalWidth === 0) return null;
+  const qRadius = Math.max(8, Math.round(radius));
+  const key = `${kind}:${qRadius}`;
+  const cached = FRUIT_PRESENCE_CACHE.get(key);
+  if (cached) return cached;
+
+  const size = fruitDrawSize(kind, qRadius);
+  const ink = Math.max(1.6, qRadius * 0.09);
+  const rim = Math.max(1.1, qRadius * 0.05);
+  const shadowBlur = qRadius * 0.4;
+  const shadowOffsetY = Math.max(3, qRadius * 0.26);
+  const padX = Math.ceil(Math.max(shadowBlur, ink, rim * 1.1) + 4);
+  const padTop = Math.ceil(Math.max(shadowBlur, ink, rim * 1.3) + 4);
+  const padBottom = Math.ceil(shadowBlur + shadowOffsetY + 4);
+  const pixelRatio = 2;
+  const cssWidth = size + padX * 2;
+  const cssHeight = size + padTop + padBottom;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(cssWidth * pixelRatio);
+  canvas.height = Math.ceil(cssHeight * pixelRatio);
+  (canvas as HTMLCanvasElement & { __fruitKind?: FruitKind }).__fruitKind = kind;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.scale(pixelRatio, pixelRatio);
+  const cx = padX + size / 2;
+  const cy = padTop + size / 2;
+  const paint = () => ctx.drawImage(sprite, cx - size / 2, cy - size / 2, size, size);
+  ctx.save();
+  ctx.shadowColor = "rgba(8, 4, 16, 0.78)";
+  ctx.shadowBlur = shadowBlur;
+  ctx.shadowOffsetY = shadowOffsetY;
+  paint();
+  ctx.shadowOffsetY = 0;
+  ctx.shadowBlur = ink;
+  ctx.shadowColor = "#241018";
+  paint();
+  ctx.shadowColor = "rgba(255, 246, 220, 0.92)";
+  ctx.shadowBlur = rim;
+  ctx.shadowOffsetX = -rim * 1.1;
+  ctx.shadowOffsetY = -rim * 1.3;
+  paint();
+  ctx.restore();
+  paint();
+  const baked = { canvas, cx, cy, cssWidth, cssHeight, radius: qRadius };
+  FRUIT_PRESENCE_CACHE.set(key, baked);
+  return baked;
+}
+
+function drawBakedFruit(
   context: CanvasRenderingContext2D,
-  kind: FruitKind,
+  baked: BakedFruitSprite,
   x: number,
   y: number,
-  radius: number,
-  rotation = 0,
+  rotation: number,
+  scale: number,
 ) {
-  const sprite = FRUIT_SPRITES[kind];
-  if (!sprite?.complete || sprite.naturalWidth === 0) {
-    drawFallbackFruit(context, kind, x, y, radius, rotation);
-    return;
-  }
-
-  const size = radius * (kind === "pineapple" ? 3.55 : 3.25);
   context.save();
   context.translate(x, y);
   context.rotate(rotation);
-  context.drawImage(sprite, -size / 2, -size / 2, size, size);
+  if (scale !== 1) context.scale(scale, scale);
+  context.drawImage(baked.canvas, -baked.cx, -baked.cy, baked.cssWidth, baked.cssHeight);
   context.restore();
 }
 
-// Inked cel presence, applied once at 2D composite for sprites and meshes:
-// a grounded drop shadow, a tight ink halo, and a cream rim light. Cheap
-// (three shadowed blits plus one clean draw) and readable on every fruit color.
-function paintFruitPresence(context: CanvasRenderingContext2D, radius: number, paint: () => void) {
+// Used only when the webp has not loaded yet. One ink disc and a cream rim, no shadowBlur.
+function paintCheapFruitPresence(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  radius: number,
+) {
   const ink = Math.max(1.6, radius * 0.09);
   const rim = Math.max(1.1, radius * 0.05);
   context.save();
-  context.shadowColor = "rgba(8, 4, 16, 0.78)";
-  context.shadowBlur = radius * 0.4;
-  context.shadowOffsetY = Math.max(3, radius * 0.26);
-  paint();
-  context.shadowOffsetY = 0;
-  context.shadowBlur = ink;
-  context.shadowColor = "#241018";
-  paint();
-  context.shadowColor = "rgba(255, 246, 220, 0.92)";
-  context.shadowBlur = rim;
-  context.shadowOffsetX = -rim * 1.1;
-  context.shadowOffsetY = -rim * 1.3;
-  paint();
+  context.fillStyle = "rgba(8, 4, 16, 0.78)";
+  context.beginPath();
+  context.ellipse(x, y + Math.max(3, radius * 0.26), radius * 0.92, radius * 0.55, 0, 0, Math.PI * 2);
+  context.fill();
+  context.strokeStyle = "#241018";
+  context.lineWidth = ink * 2;
+  context.beginPath();
+  context.arc(x, y, radius + ink, 0, Math.PI * 2);
+  context.stroke();
+  context.strokeStyle = "rgba(255, 246, 220, 0.92)";
+  context.lineWidth = rim * 2;
+  context.beginPath();
+  context.arc(x - rim * 1.1, y - rim * 1.3, radius + rim * 0.5, 0, Math.PI * 2);
+  context.stroke();
   context.restore();
-  paint();
 }
 
 function drawPower(
@@ -627,6 +693,65 @@ function drawDinerStool(
   context.restore();
 }
 
+type BackdropFills = {
+  width: number;
+  height: number;
+  wallGlow: CanvasGradient;
+  counterGradient: CanvasGradient;
+  barScrim: CanvasGradient;
+  vignette: CanvasGradient;
+};
+
+let backdropFills: BackdropFills | null = null;
+
+function getBackdropFills(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  wallBottom: number,
+): BackdropFills {
+  if (backdropFills && backdropFills.width === width && backdropFills.height === height) {
+    return backdropFills;
+  }
+  const wallGlow = context.createRadialGradient(
+    width * 0.5,
+    height * 0.32,
+    0,
+    width * 0.5,
+    height * 0.4,
+    Math.max(width * 0.62, height * 0.74),
+  );
+  wallGlow.addColorStop(0, "#397d75");
+  wallGlow.addColorStop(0.48, "#245b5b");
+  wallGlow.addColorStop(1, "#10333b");
+
+  const counterGradient = context.createLinearGradient(0, wallBottom + 20, 0, height);
+  counterGradient.addColorStop(0, "#643047");
+  counterGradient.addColorStop(0.28, "#3d2139");
+  counterGradient.addColorStop(1, "#171c2c");
+
+  const scrimTop = wallBottom - 6;
+  const barScrim = context.createLinearGradient(0, scrimTop, 0, height);
+  barScrim.addColorStop(0, "rgba(16, 8, 22, 0)");
+  barScrim.addColorStop(0.2, "rgba(14, 8, 18, 0.16)");
+  barScrim.addColorStop(1, "rgba(10, 6, 16, 0.3)");
+
+  const vignette = context.createRadialGradient(
+    width / 2,
+    height / 2,
+    Math.min(width, height) * 0.2,
+    width / 2,
+    height / 2,
+    width * 0.78,
+  );
+  vignette.addColorStop(0, "rgba(9,23,29,0)");
+  vignette.addColorStop(0.66, "rgba(8,10,20,.05)");
+  vignette.addColorStop(1, "rgba(8,10,20,.52)");
+
+  backdropFills = { width, height, wallGlow, counterGradient, barScrim, vignette };
+  return backdropFills;
+}
+
 function drawBackdrop(
   context: CanvasRenderingContext2D,
   width: number,
@@ -639,22 +764,12 @@ function drawBackdrop(
   const coral = "#ed5a50";
   const mint = "#66d9c0";
   const wallBottom = height * 0.72;
+  const fills = getBackdropFills(context, width, height, wallBottom);
 
   context.fillStyle = "#10333b";
   context.fillRect(0, 0, width, height);
 
-  const wallGlow = context.createRadialGradient(
-    width * 0.5,
-    height * 0.32,
-    0,
-    width * 0.5,
-    height * 0.4,
-    Math.max(width * 0.62, height * 0.74),
-  );
-  wallGlow.addColorStop(0, "#397d75");
-  wallGlow.addColorStop(0.48, "#245b5b");
-  wallGlow.addColorStop(1, "#10333b");
-  context.fillStyle = wallGlow;
+  context.fillStyle = fills.wallGlow;
   context.fillRect(0, 0, width, wallBottom);
 
   // Large cel-shaded wall tiles keep the center readable while giving the room a drawn set.
@@ -761,11 +876,7 @@ function drawBackdrop(
   context.fillStyle = "rgba(87,29,53,.25)";
   for (let x = -34; x < width + 34; x += 76) context.fillRect(x, wallBottom + 12, 38, 10);
 
-  const counterGradient = context.createLinearGradient(0, wallBottom + 20, 0, height);
-  counterGradient.addColorStop(0, "#643047");
-  counterGradient.addColorStop(0.28, "#3d2139");
-  counterGradient.addColorStop(1, "#171c2c");
-  context.fillStyle = counterGradient;
+  context.fillStyle = fills.counterGradient;
   context.fillRect(0, wallBottom + 23, width, height - wallBottom - 23);
 
   // Panel seams and highlights make the bar front feel inked and cel shaded.
@@ -795,11 +906,7 @@ function drawBackdrop(
 
   // Soft desaturated scrim unifies the busy bar front so falling fruit can lift off it.
   const scrimTop = wallBottom - 6;
-  const barScrim = context.createLinearGradient(0, scrimTop, 0, height);
-  barScrim.addColorStop(0, "rgba(16, 8, 22, 0)");
-  barScrim.addColorStop(0.2, "rgba(14, 8, 18, 0.16)");
-  barScrim.addColorStop(1, "rgba(10, 6, 16, 0.3)");
-  context.fillStyle = barScrim;
+  context.fillStyle = fills.barScrim;
   context.fillRect(0, scrimTop, width, height - scrimTop);
 
   // Subtle, deterministic ink/print freckles; denser near the edges so fruit remains crisp.
@@ -816,11 +923,7 @@ function drawBackdrop(
   }
   context.restore();
 
-  const vignette = context.createRadialGradient(width / 2, height / 2, Math.min(width, height) * 0.2, width / 2, height / 2, width * 0.78);
-  vignette.addColorStop(0, "rgba(9,23,29,0)");
-  vignette.addColorStop(0.66, "rgba(8,10,20,.05)");
-  vignette.addColorStop(1, "rgba(8,10,20,.52)");
-  context.fillStyle = vignette;
+  context.fillStyle = fills.vignette;
   context.fillRect(0, 0, width, height);
 
   // Fine vertical risograph grain ties the code-drawn room to the illustrated assets.
@@ -1196,6 +1299,7 @@ export function GameCanvas({
       height = Math.max(1, rect.height);
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
+      backdropFills = null;
     };
     resize();
     const observer = new ResizeObserver(resize);
@@ -1405,7 +1509,7 @@ export function GameCanvas({
         juiceAudio.play("wrong");
         callbackRef.current.onAnnounce(
           target.kind === "wrong-ticket" && aimed
-            ? `${aimed.customer} is not waiting on ${FRUIT_META[kind].label}. Tap a ticket that wants it.`
+            ? `${aimed.customer} is not waiting on ${FRUIT_META[kind].label}. Cycle the order pile, or press the arrow keys, to aim a ticket that wants it.`
             : `No customer needs ${FRUIT_META[kind].label} right now.${engine.practice ? "" : ` ${Math.abs(scored.delta)} point penalty. Combo reset.`}`,
         );
       }
@@ -1481,14 +1585,9 @@ export function GameCanvas({
       engine.shake = Math.max(0, engine.shake - delta * 32);
 
       const reducedMotion = prefersReducedMotion();
-      engine.pourArcs = engine.pourArcs.filter((arc) => {
-        const progress = (now - arc.startedAt) / arc.durationMs;
-        if (!arc.bounced && progress >= 0.62) {
-          arc.bounced = true;
-          if (!reducedMotion) engine.cupBounce = 1;
-        }
-        return progress < 1;
-      });
+      const steppedArcs = stepPourArcs(engine.pourArcs, engine.aimedOrderId, now, reducedMotion);
+      engine.pourArcs = steppedArcs.arcs;
+      if (steppedArcs.bounce) engine.cupBounce = 1;
       if (engine.drinkCelebration && now - engine.drinkCelebration.startedAt >= engine.drinkCelebration.durationMs) {
         engine.drinkCelebration = null;
       }
@@ -1631,21 +1730,43 @@ export function GameCanvas({
         engine.items.forEach((item) => {
           const x = item.x * width;
           if (item.type === "fruit") {
-            paintFruitPresence(context, item.radius, () => {
-              if (!fruitMeshes?.draw(context, item, width)) {
-                drawFruit(context, item.kind as FruitKind, x, item.y, item.radius, item.rotation);
-              }
-            });
+            const kind = item.kind as FruitKind;
+            const baked = bakeFruitPresence(kind, item.radius);
+            if (baked) {
+              drawBakedFruit(context, baked, x, item.y, item.rotation, item.radius / baked.radius);
+            } else {
+              paintCheapFruitPresence(context, x, item.y, item.radius);
+            }
+            if (!fruitMeshes?.draw(context, item, width) && !baked) {
+              drawFallbackFruit(context, kind, x, item.y, item.radius, item.rotation);
+            }
           }
           else drawPower(context, item.kind as PowerKind, x, item.y, item.radius, item.rotation);
         });
-        drawPourArcs(context, engine.pourArcs, getDrinkStationLayout(width, height), now, reducedMotion);
+        const station = getDrinkStationLayout(width, height);
+        canvas.dataset.drinkCup = JSON.stringify(drinkCupBox(station));
+        drawPourArcs(
+          context,
+          engine.pourArcs.filter((arc) => arc.orderId === engine.aimedOrderId),
+          station,
+          now,
+          reducedMotion,
+        );
       }
 
       const frame = trackingRef.current;
       frame.hands.forEach((hand) => {
         const point = toWorld(hand, width, height);
         drawHand(context, point.x, point.y, hand.closed, hand.id, now);
+        if (hand.id === "left") {
+          // Open-glove path, pulse ring, and stroke, in canvas pixels around the origin.
+          canvas.dataset.leftGloveBox = JSON.stringify({
+            left: point.x - 58,
+            right: point.x + 58,
+            top: point.y - 68,
+            bottom: point.y + 48,
+          });
+        }
       });
       if (livePlay) drawTexts(engine);
 
