@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type Ref } from "react";
 import { juiceAudio } from "./game/audio";
 import type { AudioScene } from "./game/audioScore";
 import { GameCanvas } from "./game/GameCanvas";
@@ -71,8 +71,9 @@ function prefersReducedMotion() {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-function CustomerOrderCard({ order, index, aimed, onSelect }: {
+function CustomerOrderCard({ order, index, aimed, onSelect, selectRef }: {
   order: CustomerOrderSnapshot; index: number; aimed: boolean; onSelect: () => void;
+  selectRef?: Ref<HTMLButtonElement>;
 }) {
   const press = useRef<{ id: number; x: number; y: number; at: number; moved: boolean } | null>(null);
   const allowClick = useRef(false);
@@ -89,6 +90,7 @@ function CustomerOrderCard({ order, index, aimed, onSelect }: {
       <button
         type="button"
         className="order-card__select"
+        ref={selectRef}
         aria-label={`Serve ${order.customer}'s ${order.drink}`}
         aria-pressed={aimed && !order.completed}
         disabled={order.completed}
@@ -149,6 +151,121 @@ function CustomerOrderCard({ order, index, aimed, onSelect }: {
       <div className="order-card__progress"><i /></div>
       {order.completed && <div className="order-card__stamp" aria-hidden="true">ORDER UP!</div>}
     </article>
+  );
+}
+
+
+function upcomingCountLabel(count: number) {
+  return count === 1 ? "1 order" : `${count} orders`;
+}
+
+function OrderRail({ orders, aimedOrderId, onSelect }: {
+  orders: CustomerOrderSnapshot[];
+  aimedOrderId: number | null;
+  onSelect: (id: number) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const aimedSelectRef = useRef<HTMLButtonElement>(null);
+  const open = orders.filter((order) => !order.completed);
+  const completing = orders.filter((order) => order.completed);
+  const aimed = open.find((order) => order.id === aimedOrderId) ?? open[0] ?? null;
+  const upcoming = open.filter((order) => order.id !== aimed?.id);
+  const upcomingCount = upcoming.length;
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
+
+  useEffect(() => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.closest(".order-stack__queue")) {
+      aimedSelectRef.current?.focus();
+    }
+  }, [aimedOrderId]);
+
+  const indexOf = (order: CustomerOrderSnapshot) => orders.findIndex((entry) => entry.id === order.id);
+
+  return (
+    <section
+      className={`order-rail${aimedOrderId !== null ? " order-rail--aiming" : ""}${expanded ? " order-rail--expanded" : " order-rail--compact"}`}
+      aria-label="Customer orders"
+    >
+      {completing.map((order) => (
+        <CustomerOrderCard
+          order={order}
+          index={indexOf(order)}
+          aimed={false}
+          onSelect={() => {}}
+          key={order.id}
+        />
+      ))}
+      {aimed && (
+        <CustomerOrderCard
+          order={aimed}
+          index={indexOf(aimed)}
+          aimed={aimedOrderId === aimed.id}
+          onSelect={() => onSelect(aimed.id)}
+          selectRef={aimedSelectRef}
+          key={aimed.id}
+        />
+      )}
+      {upcomingCount > 0 && (
+        <div className={`order-stack${expanded ? " order-stack--open" : ""}`}>
+          <button
+            type="button"
+            className="order-stack__toggle"
+            aria-expanded={expanded}
+            aria-controls="upcoming-orders"
+            aria-label={expanded
+              ? `Hide upcoming orders, ${upcomingCountLabel(upcomingCount)} coming`
+              : `Show upcoming orders, ${upcomingCountLabel(upcomingCount)} coming`}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            <span className="order-stack__pile" aria-hidden="true">
+              {upcoming.slice(0, 3).map((order, stackIndex) => (
+                <i
+                  className="order-stack__leaf"
+                  style={{ "--order-accent": order.accent, "--stack-i": String(stackIndex) } as React.CSSProperties}
+                  key={order.id}
+                />
+              ))}
+            </span>
+            <span className="order-stack__badge" aria-hidden="true">
+              <small>+</small>
+              <strong>{upcomingCount} {upcomingCount === 1 ? "ORDER" : "ORDERS"}</strong>
+            </span>
+          </button>
+          <div
+            id="upcoming-orders"
+            className="order-stack__queue"
+            hidden={!expanded}
+            role="group"
+            aria-label="Upcoming orders"
+          >
+            {upcoming.map((order) => (
+              <CustomerOrderCard
+                order={order}
+                index={indexOf(order)}
+                aimed={false}
+                onSelect={() => {
+                  setExpanded(false);
+                  onSelect(order.id);
+                }}
+                key={order.id}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {upcomingCount > 0 ? `${upcomingCountLabel(upcomingCount)} coming` : "No more orders coming"}
+      </div>
+    </section>
   );
 }
 
@@ -718,17 +835,11 @@ export function App() {
 
       {(screen === "playing" || screen === "practice") && (
         <>
-          <section className={`order-rail${snapshot.aimedOrderId !== null ? " order-rail--aiming" : ""}`} aria-label="Customer orders">
-            {snapshot.orders.map((order, index) => (
-              <CustomerOrderCard
-                order={order}
-                index={index}
-                aimed={snapshot.aimedOrderId === order.id}
-                onSelect={() => { selectOrderRef.current = order.id; }}
-                key={order.id}
-              />
-            ))}
-          </section>
+          <OrderRail
+            orders={snapshot.orders}
+            aimedOrderId={snapshot.aimedOrderId}
+            onSelect={(id) => { selectOrderRef.current = id; }}
+          />
           {mode === "camera" && (
             <aside className="status-rail" aria-label="Tracking status">
               <span className="is-private"><i /> CAMERA ON · VIDEO HIDDEN</span>

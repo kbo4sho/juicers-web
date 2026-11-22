@@ -18,6 +18,11 @@ async function landPractice(page: Page) {
   await expect(page.getByRole("button", { name: "END SESSION" })).toBeVisible({ timeout: 7000 });
 }
 
+async function showUpcoming(page: Page) {
+  const toggle = page.getByRole("button", { name: /Show upcoming orders/ });
+  if (await toggle.isVisible()) await toggle.click();
+}
+
 test("opt-in meshes support practice, aimed pours, results and replay", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -44,13 +49,17 @@ test("opt-in meshes support practice, aimed pours, results and replay", async ({
       const items = (window as unknown as { fruitItems?: {id:number; type:string; kind:string; x:number; y:number}[] }).fruitItems ?? [];
       for (const item of items) {
         if (item.type !== "fruit" || item.y < 320 || item.y > innerHeight - 240) continue;
-        const cardIndex = cards.findIndex(card => [...card.querySelectorAll(".order-card__ingredients > span:not(.is-filled) img")]
+        const card = cards.find(card => [...card.querySelectorAll(".order-card__ingredients > span:not(.is-filled) img")]
           .some(img => img.getAttribute("src")?.endsWith(`/${item.kind}.webp`)));
-        if (cardIndex >= 0) return { ...item, cardIndex };
+        if (card) {
+          const label = card.querySelector(".order-card__select")?.getAttribute("aria-label");
+          if (label) return { ...item, label };
+        }
       }
     });
     if (target) {
-      const button = page.locator(".order-card__select").nth(target.cardIndex);
+      const button = page.getByRole("button", { name: target.label });
+      if (!(await button.isVisible())) await showUpcoming(page);
       await button.click();
       await expect(button).toHaveAttribute("aria-pressed", "true");
       // Selection/actionability can take several frames on CI's software GPU.
@@ -182,21 +191,29 @@ test("only a card tap selects: holds, drags and either demo fist leave it locked
   test.setTimeout(60_000);
   await startPractice(page);
   await landPractice(page);
-  const buttons = page.locator(".order-card__select");
-  await buttons.nth(1).click();
-  await expect(buttons.nth(1)).toHaveAttribute("aria-pressed", "true");
-  const box = (await buttons.nth(2).boundingBox())!;
+  await expect(page.getByRole("button", { name: /Show upcoming orders/ })).toBeVisible({ timeout: 10_000 });
+  await showUpcoming(page);
+  const firstName = await page.locator(".order-stack__queue .order-card__customer strong").nth(0).innerText();
+  const secondName = await page.locator(".order-stack__queue .order-card__customer strong").nth(1).innerText();
+  await page.locator(".order-stack__queue .order-card__select").nth(0).click();
+  const aimed = page.locator(".order-card--aimed .order-card__select");
+  await expect(page.locator(".order-card--aimed .order-card__customer strong")).toHaveText(firstName);
+  await expect(aimed).toHaveAttribute("aria-pressed", "true");
+  await showUpcoming(page);
+  const later = page.locator(".order-stack__queue .order-card__select");
+  const box = (await later.nth(0).boundingBox())!;
   const x = box.x + box.width / 2, y = box.y + box.height / 2;
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.waitForTimeout(450);
   await page.mouse.up();
-  await expect(buttons.nth(1)).toHaveAttribute("aria-pressed", "true");
+  await expect(aimed).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".order-card--aimed .order-card__customer strong")).toHaveText(firstName);
   await page.mouse.move(x - 20, y);
   await page.mouse.down();
   await page.mouse.move(x + 20, y);
   await page.mouse.up();
-  await expect(buttons.nth(1)).toHaveAttribute("aria-pressed", "true");
+  await expect(aimed).toHaveAttribute("aria-pressed", "true");
   // Both gloves can close in unrelated aim columns without retargeting.
   await page.mouse.move(100, 330);
   await expect(page.locator("canvas")).toBeFocused();
@@ -204,20 +221,23 @@ test("only a card tap selects: holds, drags and either demo fist leave it locked
     await page.keyboard.down(key);
     await page.waitForTimeout(100);
     await page.keyboard.up(key);
-    await expect(buttons.nth(1)).toHaveAttribute("aria-pressed", "true");
+    await expect(aimed).toHaveAttribute("aria-pressed", "true");
   }
   await page.mouse.down();
   await page.mouse.move(x, y);
   await page.mouse.up();
-  await expect(buttons.nth(1)).toHaveAttribute("aria-pressed", "true");
-  await buttons.nth(2).click();
-  await expect(buttons.nth(2)).toHaveAttribute("aria-pressed", "true");
-  await buttons.nth(0).focus();
+  await expect(aimed).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: new RegExp(`Serve ${secondName}'s`) }).click();
+  await expect(page.locator(".order-card--aimed .order-card__customer strong")).toHaveText(secondName);
+  await expect(aimed).toHaveAttribute("aria-pressed", "true");
+  await aimed.focus();
   await page.keyboard.press("Space");
-  await expect(buttons.nth(0)).toHaveAttribute("aria-pressed", "true");
-  await buttons.nth(2).focus();
+  await expect(aimed).toHaveAttribute("aria-pressed", "true");
+  await showUpcoming(page);
+  const other = page.locator(".order-stack__queue .order-card__select").nth(0);
+  await other.focus();
   await page.keyboard.press("Enter");
-  await expect(buttons.nth(2)).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".order-card--aimed .order-card__select")).toHaveAttribute("aria-pressed", "true");
 });
 
 test("phone taps select tickets, canceled touches do not", async ({ browser }) => {
@@ -225,16 +245,25 @@ test("phone taps select tickets, canceled touches do not", async ({ browser }) =
   const page = await context.newPage();
   await startPractice(page);
   await landPractice(page);
-  const buttons = page.locator(".order-card__select");
-  await buttons.nth(1).tap();
-  await expect(buttons.nth(1)).toHaveAttribute("aria-pressed", "true");
-  await buttons.nth(0).dispatchEvent("pointerdown", { pointerId: 2, isPrimary: true, button: 0 });
-  await buttons.nth(0).dispatchEvent("pointercancel", { pointerId: 2 });
-  await buttons.nth(0).dispatchEvent("click", { detail: 1 });
-  await expect(buttons.nth(1)).toHaveAttribute("aria-pressed", "true");
-  await buttons.nth(2).scrollIntoViewIfNeeded();
-  await buttons.nth(2).tap();
-  await expect(buttons.nth(2)).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: /Show upcoming orders/ })).toBeVisible({ timeout: 10_000 });
+  await showUpcoming(page);
+  const firstName = await page.locator(".order-stack__queue .order-card__customer strong").nth(0).innerText();
+  const secondName = await page.locator(".order-stack__queue .order-card__customer strong").nth(1).innerText();
+  const upcoming = page.locator(".order-stack__queue .order-card__select");
+  await upcoming.nth(0).tap();
+  const aimed = page.locator(".order-card--aimed .order-card__select");
+  await expect(page.locator(".order-card--aimed .order-card__customer strong")).toHaveText(firstName);
+  await expect(aimed).toHaveAttribute("aria-pressed", "true");
+  await aimed.dispatchEvent("pointerdown", { pointerId: 2, isPrimary: true, button: 0 });
+  await aimed.dispatchEvent("pointercancel", { pointerId: 2 });
+  await aimed.dispatchEvent("click", { detail: 1 });
+  await expect(aimed).toHaveAttribute("aria-pressed", "true");
+  await showUpcoming(page);
+  const next = page.getByRole("button", { name: new RegExp(`Serve ${secondName}'s`) });
+  await next.scrollIntoViewIfNeeded();
+  await next.tap();
+  await expect(page.locator(".order-card--aimed .order-card__customer strong")).toHaveText(secondName);
+  await expect(page.locator(".order-card--aimed .order-card__select")).toHaveAttribute("aria-pressed", "true");
   await context.close();
 });
 

@@ -215,9 +215,6 @@ function drawFallbackFruit(
   context.save();
   context.translate(x, y);
   context.rotate(rotation);
-  context.shadowBlur = radius * 0.45;
-  context.shadowColor = "rgba(0,0,0,.34)";
-  context.shadowOffsetY = radius * 0.18;
 
   if (kind === "berry") {
     const berries = [
@@ -352,11 +349,32 @@ function drawFruit(
   context.save();
   context.translate(x, y);
   context.rotate(rotation);
-  context.shadowColor = "rgba(20,8,32,.42)";
-  context.shadowBlur = radius * 0.34;
-  context.shadowOffsetY = radius * 0.18;
   context.drawImage(sprite, -size / 2, -size / 2, size, size);
   context.restore();
+}
+
+// Inked cel presence, applied once at 2D composite for sprites and meshes:
+// a grounded drop shadow, a tight ink halo, and a cream rim light. Cheap
+// (three shadowed blits plus one clean draw) and readable on every fruit color.
+function paintFruitPresence(context: CanvasRenderingContext2D, radius: number, paint: () => void) {
+  const ink = Math.max(1.6, radius * 0.09);
+  const rim = Math.max(1.1, radius * 0.05);
+  context.save();
+  context.shadowColor = "rgba(8, 4, 16, 0.78)";
+  context.shadowBlur = radius * 0.4;
+  context.shadowOffsetY = Math.max(3, radius * 0.26);
+  paint();
+  context.shadowOffsetY = 0;
+  context.shadowBlur = ink;
+  context.shadowColor = "#241018";
+  paint();
+  context.shadowColor = "rgba(255, 246, 220, 0.92)";
+  context.shadowBlur = rim;
+  context.shadowOffsetX = -rim * 1.1;
+  context.shadowOffsetY = -rim * 1.3;
+  paint();
+  context.restore();
+  paint();
 }
 
 function drawPower(
@@ -753,6 +771,15 @@ function drawBackdrop(
   drawDinerStool(context, width * 0.18, seatY, stoolScale, coral, height);
   drawDinerStool(context, width * 0.5, seatY + height * 0.018, stoolScale, mint, height);
   drawDinerStool(context, width * 0.82, seatY, stoolScale, coral, height);
+
+  // Soft desaturated scrim unifies the busy bar front so falling fruit can lift off it.
+  const scrimTop = wallBottom - 6;
+  const barScrim = context.createLinearGradient(0, scrimTop, 0, height);
+  barScrim.addColorStop(0, "rgba(16, 8, 22, 0)");
+  barScrim.addColorStop(0.2, "rgba(14, 8, 18, 0.16)");
+  barScrim.addColorStop(1, "rgba(10, 6, 16, 0.3)");
+  context.fillStyle = barScrim;
+  context.fillRect(0, scrimTop, width, height - scrimTop);
 
   // Subtle, deterministic ink/print freckles; denser near the edges so fruit remains crisp.
   context.save();
@@ -1519,7 +1546,11 @@ export function GameCanvas({
         engine.items.forEach((item) => {
           const x = item.x * width;
           if (item.type === "fruit") {
-            if (!fruitMeshes?.draw(context, item, width)) drawFruit(context, item.kind as FruitKind, x, item.y, item.radius, item.rotation);
+            paintFruitPresence(context, item.radius, () => {
+              if (!fruitMeshes?.draw(context, item, width)) {
+                drawFruit(context, item.kind as FruitKind, x, item.y, item.radius, item.rotation);
+              }
+            });
           }
           else drawPower(context, item.kind as PowerKind, x, item.y, item.radius, item.rotation);
         });
