@@ -22,6 +22,7 @@ import {
   FRUIT_META,
   FRUITS,
   HOUSE_MIXES_MENU,
+  celebratingOrderId,
   personaByName,
   resolveSelectedOrder,
   rankForScore,
@@ -136,6 +137,7 @@ type Engine = {
   practiceDone: boolean;
   pourArcs: PourArc[];
   drinkCelebration: DrinkCelebration | null;
+  queuedPours: Array<{ kind: FruitKind; x: number; y: number }>;
   cupBounce: number;
   visualLayerCount: number;
   visualOrderId: number | null;
@@ -186,6 +188,7 @@ function newEngine(seed: number, practice = false): Engine {
     practiceDone: false,
     pourArcs: [],
     drinkCelebration: null,
+    queuedPours: [],
     cupBounce: 0,
     visualLayerCount: 0,
     visualOrderId: null,
@@ -1304,6 +1307,8 @@ export function GameCanvas({
     resize();
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
+    window.addEventListener("resize", resize);
+    window.visualViewport?.addEventListener("resize", resize);
 
     const spawn = (engine: Engine, now: number, elapsed: number) => {
       if (engine.practice && engine.items.length > 0) {
@@ -1387,6 +1392,11 @@ export function GameCanvas({
       }
 
       const kind = item.kind as FruitKind;
+      const holdId = celebratingOrderId(engine.drinkCelebration, now);
+      if (holdId != null) {
+        engine.queuedPours.push({ kind, x, y });
+        return;
+      }
       const frenzy = engine.frenzyUntil > now;
       const target = resolveSqueezeTarget(engine.aimedOrderId, kind, engine.orders);
       const matchingOrder = target.orderId === null
@@ -1441,7 +1451,11 @@ export function GameCanvas({
           engine.ordersCompleted += 1;
           engine.orderStreak += 1;
           matchingOrder.completed = true;
-          matchingOrder.completedUntil = now + personaByName(matchingOrder.customer).dwellMs;
+          const celebrationMs = reducedMotion ? 1050 : 1450;
+          matchingOrder.completedUntil = now + Math.max(
+            personaByName(matchingOrder.customer).dwellMs,
+            celebrationMs + 50,
+          );
           engine.drinkCelebration = {
             orderId: matchingOrder.id,
             customer: matchingOrder.customer,
@@ -1450,8 +1464,9 @@ export function GameCanvas({
             accent: matchingOrder.accent,
             pouredKinds: [...matchingOrder.pouredKinds],
             startedAt: now,
-            durationMs: reducedMotion ? 1050 : 1450,
+            durationMs: celebrationMs,
           };
+          engine.aimedOrderId = matchingOrder.id;
           engine.texts.push({
             x: width * 0.5,
             y: Math.max(260, height * 0.43),
@@ -1547,12 +1562,33 @@ export function GameCanvas({
 
       const frame = trackingRef.current;
       const previousAim = engine.aimedOrderId;
+      if (engine.drinkCelebration && now - engine.drinkCelebration.startedAt >= engine.drinkCelebration.durationMs) {
+        engine.drinkCelebration = null;
+        engine.aimedOrderId = resolveSelectedOrder(engine.aimedOrderId, engine.orders);
+        const queued = engine.queuedPours;
+        engine.queuedPours = [];
+        queued.forEach((pour) => {
+          hitItem(engine, {
+            id: -1,
+            type: "fruit",
+            kind: pour.kind,
+            x: pour.x,
+            y: pour.y,
+            radius: 1,
+            velocityX: 0,
+            velocityY: 0,
+            rotation: 0,
+            rotationSpeed: 0,
+          }, pour.x, pour.y, now);
+        });
+      }
+      const holdId = celebratingOrderId(engine.drinkCelebration, now);
       const requested = selectOrderRef?.current ?? null;
       if (selectOrderRef) selectOrderRef.current = null;
-      if (requested !== null && engine.orders.some((order) => order.id === requested && !order.completed)) {
+      if (!holdId && requested !== null && engine.orders.some((order) => order.id === requested && !order.completed)) {
         engine.aimedOrderId = requested;
       }
-      engine.aimedOrderId = resolveSelectedOrder(engine.aimedOrderId, engine.orders);
+      engine.aimedOrderId = resolveSelectedOrder(engine.aimedOrderId, engine.orders, holdId);
       frame.hands.forEach((hand) => {
         const justClosed = hand.closed && !engine.previousClosed[hand.id];
         engine.previousClosed[hand.id] = hand.closed;
@@ -1565,6 +1601,11 @@ export function GameCanvas({
         if (nearest) hitItem(engine, nearest.item, nearest.item.x * width, nearest.item.y, now);
         else juiceAudio.play("close");
       });
+      engine.aimedOrderId = resolveSelectedOrder(
+        engine.aimedOrderId,
+        engine.orders,
+        celebratingOrderId(engine.drinkCelebration, now),
+      );
 
       engine.particles.forEach((particle) => {
         particle.life -= delta;
@@ -1694,6 +1735,8 @@ export function GameCanvas({
 
     const render = (now: number) => {
       animationFrame = requestAnimationFrame(render);
+      const view = canvas.getBoundingClientRect();
+      if (Math.abs(view.width - width) > 0.5 || Math.abs(view.height - height) > 0.5) resize();
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
       context.clearRect(0, 0, width, height);
       const engine = engineRef.current;
@@ -1745,6 +1788,9 @@ export function GameCanvas({
         });
         const station = getDrinkStationLayout(width, height);
         canvas.dataset.drinkCup = JSON.stringify(drinkCupBox(station));
+        const holdId = celebratingOrderId(engine.drinkCelebration, now);
+        if (holdId != null) canvas.dataset.celebrating = String(holdId);
+        else delete canvas.dataset.celebrating;
         drawPourArcs(
           context,
           engine.pourArcs.filter((arc) => arc.orderId === engine.aimedOrderId),
@@ -1807,6 +1853,8 @@ export function GameCanvas({
       disposed = true;
       fruitMeshes?.dispose();
       cancelAnimationFrame(animationFrame);
+      window.removeEventListener("resize", resize);
+      window.visualViewport?.removeEventListener("resize", resize);
       observer.disconnect();
     };
   }, [cameraActive, trackingRef, selectOrderRef]);

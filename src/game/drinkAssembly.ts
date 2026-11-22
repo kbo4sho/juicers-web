@@ -130,6 +130,7 @@ export function getOrderStationMetrics(width: number): OrderStationMetrics {
   const styles = getComputedStyle(document.documentElement);
   const cacheKey = [
     String(window.innerWidth),
+    String(window.innerHeight),
     styles.getPropertyValue(ORDER_STATION_VARS.railLeft),
     styles.getPropertyValue(ORDER_STATION_VARS.cardWidth),
     styles.getPropertyValue(ORDER_STATION_VARS.stackPeek),

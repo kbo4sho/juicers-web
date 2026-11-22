@@ -124,3 +124,28 @@ test("chalkboard lines fill empty boards from the house list", () => {
     ["Quiet Cup", "Moon Mix", "Citrus Pop"],
   );
 });
+
+test("selection holds a completed ticket until the celebration ends", () => {
+  const orders = [ticket({ id: 1, completed: true }), ticket({ id: 2 })];
+  assert.equal(model.resolveSelectedOrder(1, orders, 1), 1);
+  assert.equal(model.resolveSelectedOrder(2, orders, 1), 1);
+  assert.equal(model.resolveSelectedOrder(1, orders), 2);
+  assert.equal(model.celebratingOrderId({ orderId: 1, startedAt: 0, durationMs: 1200 }, 400), 1);
+  assert.equal(model.celebratingOrderId({ orderId: 1, startedAt: 0, durationMs: 1200 }, 1200), null);
+  assert.equal(model.celebratingOrderId(null, 400), null);
+});
+
+test("queued squeezes during a celebration target the next open ticket, never the completed one", () => {
+  const orders = [
+    ticket({ id: 1, customer: "Maya", ingredients: ["orange", "lime"], filled: [true, true], completed: true }),
+    ticket({ id: 2, customer: "Theo", ingredients: ["orange"], filled: [false] }),
+  ];
+  assert.equal(model.resolveSqueezeTarget(1, "orange", orders).kind, "nobody");
+  const nextId = model.resolveSelectedOrder(1, orders);
+  assert.equal(nextId, 2);
+  const served = model.resolveSqueezeTarget(nextId, "orange", orders);
+  assert.equal(served.kind, "served");
+  assert.equal(served.orderId, 2);
+  assert.equal(model.resolveSqueezeTarget(nextId, "lime", orders).kind, "wrong-ticket");
+  assert.equal(model.resolveSqueezeTarget(nextId, "lime", orders).orderId, 2);
+});

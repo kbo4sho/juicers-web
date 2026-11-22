@@ -217,12 +217,13 @@ function OrderRail({ orders, aimedOrderId, onSelect }: {
   onSelect: (id: number) => void;
 }) {
   const open = orders.filter((order) => !order.completed);
-  const aimed = open.find((order) => order.id === aimedOrderId) ?? open[0] ?? null;
+  const held = orders.find((order) => order.completed && order.id === aimedOrderId) ?? null;
+  const aimed = held ?? open.find((order) => order.id === aimedOrderId) ?? open[0] ?? null;
   const upcoming = open.filter((order) => order.id !== aimed?.id);
   const upcomingCount = upcoming.length;
 
   const cycle = (delta: number) => {
-    if (open.length < 2 || !aimed) return;
+    if (held || open.length < 2 || !aimed) return;
     const current = open.findIndex((order) => order.id === aimed.id);
     const next = open[(current + delta + open.length) % open.length];
     if (next) onSelect(next.id);

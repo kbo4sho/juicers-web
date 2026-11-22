@@ -259,7 +259,25 @@ export function chalkboardLines(liveDrinks: readonly string[], fallback: readonl
 
 // Selection is an explicit UI action. Hand coordinates and closed state never
 // enter this contract. Only order lifecycle can advance an unavailable ticket.
-export function resolveSelectedOrder(selectedId: number | null, orders: readonly AimableOrder[]): number | null {
+// While a completed ticket is held for its ORDER UP celebration, aim stays on
+// that ticket; pours still cannot serve it (see resolveSqueezeTarget).
+export function celebratingOrderId(
+  celebration: { orderId: number; startedAt: number; durationMs: number } | null | undefined,
+  now: number,
+): number | null {
+  if (!celebration) return null;
+  if (now - celebration.startedAt >= celebration.durationMs) return null;
+  return celebration.orderId;
+}
+
+export function resolveSelectedOrder(
+  selectedId: number | null,
+  orders: readonly AimableOrder[],
+  holdCompletedId: number | null = null,
+): number | null {
+  if (holdCompletedId != null && orders.some((order) => order.id === holdCompletedId && order.completed)) {
+    return holdCompletedId;
+  }
   const open = orders.filter((order) => !order.completed);
   return open.find((order) => order.id === selectedId)?.id ?? open[0]?.id ?? null;
 }
